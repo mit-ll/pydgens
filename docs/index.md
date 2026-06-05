@@ -6,15 +6,39 @@ icon: lucide/rocket
 
 PYDGENS is a Python/JAX package for approximating equilibrium solutions in multi-player dynamic and differential games.
 
-The package is under active development. The public API is intended for early adopters and may change before a stable `1.0` release.
+PYDGENS is a pre-`1.0` release. The package is ready for early adopters, but the public API may continue to evolve as the modeling frontend, examples, and solver interfaces mature.
 
 ## Installation
-
-After the first PyPI release:
 
 ```bash
 pip install pydgens
 ```
+
+PYDGENS requires Python `3.12` or newer.
+
+## Solvers
+
+PYDGENS currently supports three main solver paths:
+
+- `LQ`: linear-quadratic, unconstrained games solved for feedback Nash strategies
+- `iLQ`: nonlinear, unconstrained games solved for local feedback Nash strategies
+- `AL`: constrained nonlinear games solved with an augmented-Lagrangian workflow for local open-loop trajectories
+
+## Quick Start
+
+Run a minimal linear-quadratic example:
+
+```bash
+python src/pydgens/examples/tug_o_war.py
+```
+
+Run the quick test suite:
+
+```bash
+pytest tests/ -v -s -m "not slow"
+```
+
+## Development
 
 For local development:
 
@@ -29,20 +53,6 @@ uv sync --extra dev
 source .venv/bin/activate
 ```
 
-## Quick Check
-
-Run the quick test suite:
-
-```bash
-pytest tests/ -v -s -m "not slow"
-```
-
-Run a small example:
-
-```bash
-python src/pydgens/examples/tug_o_war.py
-```
-
 ## Project Layout
 
 - `src/pydgens/frontend/`: user-facing modeling helpers.
@@ -50,7 +60,3 @@ python src/pydgens/examples/tug_o_war.py
 - `src/pydgens/solvers/`: numerical algorithms for equilibria, trajectories, and constrained solves.
 - `src/pydgens/examples/`: runnable game examples.
 - `tests/`: unit, regression, integration, and benchmark tests.
-
-## Release Notes
-
-Public releases are built from the public GitHub repository and published to PyPI through GitHub Actions.

@@ -4,7 +4,7 @@
 # Single-sourcing package version
 # https://packaging.python.org/guides/single-sourcing-package-version/
 
-__version__ = "0.6.0"
+__version__ = "0.6.1"
 
 # User-facing semantic modeling APIs
 from pydgens.frontend import dynamics

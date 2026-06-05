@@ -8,7 +8,7 @@ Examples live in [`src/pydgens/examples/`](../src/pydgens/examples/). These scri
 
 ## Tug-of-War
 
-Compute a feedback Nash equilibrium for a simple linear-quadratic game:
+Compute a feedback Nash equilibrium for a simple linear-quadratic game with the `LQ` solver:
 
 ```bash
 python src/pydgens/examples/tug_o_war.py
@@ -16,18 +16,16 @@ python src/pydgens/examples/tug_o_war.py
 
 ## Two-Player Unicycle
 
-Run the iterative linear-quadratic solver on a nonlinear game where two players control a shared unicycle system:
+Run the iterative linear-quadratic solver (`iLQ`) on a nonlinear game where two players control a shared unicycle system:
 
 ```bash
-python src/pydgens/examples/run_unicycle1.py
+python src/pydgens/examples/unicycle.py
 ```
 
-## Double-Integrator Lady-Bandit-Guard
+## Constrained Integrators
 
-Run a linear-quadratic target-guarding example with double-integrator vehicles:
+Run the augmented-Lagrangian (`AL`) solver on a constrained nonlinear game with bounded controls:
 
 ```bash
-python src/pydgens/examples/run_doubleint_lqlbg.py --cfg C1_001
+python src/pydgens/examples/constrained_integrators.py
 ```
-
-The next public-docs pass should add saved plots or animations for these examples so users can see expected solver outputs before running the scripts locally.

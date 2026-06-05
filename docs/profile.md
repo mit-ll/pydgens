@@ -14,7 +14,7 @@ icon: material/chart-bar
     To profile all pytests:
 
     ```bash
-    scalene --profile-all src/pydgens/examples/run_unicycle1.py
+    scalene --profile-all src/pydgens/examples/unicycle.py
     ```
 
     
@@ -68,7 +68,7 @@ icon: material/chart-bar
     Example:
 
     ```bash
-    LINE_PROFILE=1 python src/pydgens/examples/run_unicycle1.py
+    LINE_PROFILE=1 python src/pydgens/examples/unicycle.py
     ```
 
     ```bash
@@ -108,5 +108,5 @@ icon: material/chart-bar
 
     Example:
     ```bash
-    python src/pydgens/examples/run_unicycle1.py
+    python src/pydgens/examples/unicycle.py
     ```
