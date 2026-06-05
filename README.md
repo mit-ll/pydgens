@@ -6,15 +6,51 @@
 
 PYDGENS provides numerical solvers for approximating equilibrium solutions in multi-player, general-sum dynamic and differential games. The package currently focuses on linear-quadratic feedback Nash games, iterative linear-quadratic methods for nonlinear games, and augmented-Lagrangian workflows for constrained games.
 
-PYDGENS is under active development. The public API is usable for early adopters, but it may change before a stable `1.0` release.
+PYDGENS is a pre-`1.0` release. The package is ready for early adopters, but the public API may continue to evolve as the modeling frontend, examples, and solver interfaces mature.
 
 ## Installation
-
-After the first PyPI release:
 
 ```bash
 pip install pydgens
 ```
+
+PYDGENS requires Python `3.12` or newer.
+
+## Solvers
+
+PYDGENS currently supports three main solver paths:
+
+- LQ: linear-quadratic, unconstrained games solved for feedback Nash strategies
+- iLQ: nonlinear, unconstrained games solved for local feedback Nash strategies
+- AL: constrained nonlinear games solved with an augmented-Lagrangian workflow for local open-loop trajectories
+
+## Examples
+
+Run a minimal linear-quadratic tug-of-war game solved with the LQ solver:
+
+```bash
+python src/pydgens/examples/tug_o_war.py
+```
+
+Run a nonlinear two-player unicycle game solved with the iterative LQ solver:
+
+```bash
+python src/pydgens/examples/unicycle.py
+```
+
+Run a constrained two-player integrator game solved with the augmented-Lagrangian solver:
+
+```bash
+python src/pydgens/examples/constrained_integrators.py
+```
+
+More examples live in [`src/pydgens/examples/`](src/pydgens/examples/).
+
+## Documentation
+
+Documentation is available at <https://mit-ll.github.io/pydgens/>.
+
+## Development
 
 For development from a local clone:
 
@@ -29,28 +65,6 @@ uv sync --extra dev
 source .venv/bin/activate
 ```
 
-## Examples
-
-Run a minimal linear-quadratic tug-of-war game:
-
-```bash
-python src/pydgens/examples/tug_o_war.py
-```
-
-Run a nonlinear two-player unicycle example:
-
-```bash
-python src/pydgens/examples/run_unicycle1.py
-```
-
-Run the double-integrator lady-bandit-guard example:
-
-```bash
-python src/pydgens/examples/run_doubleint_lqlbg.py --cfg C1_001
-```
-
-More examples live in [`src/pydgens/examples/`](src/pydgens/examples/).
-
 ## Testing
 
 Quick tests:
@@ -64,20 +78,6 @@ Slow and benchmark-oriented tests:
 ```bash
 pytest tests/ -v -m "slow" --benchmark-columns='mean, min, max, stddev, rounds'
 ```
-
-## Documentation
-
-The documentation site is built with Zensical:
-
-```bash
-zensical serve
-```
-
-Open <http://localhost:8000> to preview the local site.
-
-## Release Status
-
-The public repository is intended to start with a clean git history. Release artifacts will be built from the public repository and published to PyPI through GitHub Actions after the PyPI trusted publisher is configured.
 
 ## Disclaimer
 
