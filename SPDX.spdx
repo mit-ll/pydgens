@@ -1,0 +1,17 @@
+SPDXVersion: SPDX-2.3
+DataLicense: CC0-1.0
+SPDXID: SPDXRef-DOCUMENT
+DocumentName: pydgens
+DocumentNamespace: https://github.com/mit-ll/pydgens/spdx
+Creator: Organization: MIT Lincoln Laboratory
+Created: 2026-03-26T00:00:00Z
+
+##### Package representing this project #####
+
+PackageName: pydgens
+SPDXID: SPDXRef-Package-pydgens
+PackageHomePage: https://github.com/mit-ll/pydgens
+FilesAnalyzed: false
+PackageLicenseDeclared: MIT
+
+Relationship: SPDXRef-DOCUMENT DESCRIBES SPDXRef-Package-pydgens

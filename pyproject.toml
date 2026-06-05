@@ -1,0 +1,74 @@
+[build-system]
+requires = [
+  "setuptools >= 61.0",
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pydgens"
+description = "Python/JAX-based numerical solvers for dynamic/differential game equilibria"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE.txt"]
+authors = [
+  { name = "R. Allen" },
+  { name = "W. Li" },
+]
+keywords = [
+  "differential games",
+  "dynamic games",
+  "feedback Nash equilibrium",
+  "jax",
+  "optimal control",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering",
+]
+
+dependencies = [
+  "flax",
+  "jax",
+  "numpy",
+]
+dynamic = ["version"]
+
+[project.urls]
+Changelog = "https://github.com/mit-ll/pydgens/blob/main/CHANGELOG.md"
+Documentation = "https://mit-ll.github.io/pydgens/"
+Issues = "https://github.com/mit-ll/pydgens/issues"
+Source = "https://github.com/mit-ll/pydgens"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"pydgens.examples" = ["*.json"]
+
+[tool.setuptools.dynamic]
+version = { attr = "pydgens.__version__" }
+
+[project.optional-dependencies]
+dev = [
+  "line_profiler",
+  "pyinstrument",
+  "pytest",
+  "pytest-rich",
+  "pytest-benchmark",
+  "scalene",
+  "tensorboard",
+  "zensical",
+]
+full = ["pydgens[dev]"]
+
+[tool.pytest.ini_options]
+markers = [
+  "regression: approved-output and/or performance regression tests",
+  "slow: may include JIT compile or long-running steps",
+]

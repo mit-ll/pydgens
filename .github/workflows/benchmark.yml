@@ -1,0 +1,62 @@
+name: benchmark
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmarks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install project
+        run: uv sync --locked --extra dev
+
+      - name: Prepare output directories
+        run: |
+          mkdir -p "$RUNNER_TEMP/bench_logs"
+          mkdir -p "$RUNNER_TEMP/bench_results"
+
+      - name: Log environment
+        run: scripts/ci/benchmark/log_env.sh current "$RUNNER_TEMP/bench_logs/current.env"
+
+      - name: Run benchmark tests
+        run: |
+          uv run pytest tests/ -v -m "slow" \
+            --benchmark-columns='mean,min,max,stddev,rounds' \
+            | tee "$RUNNER_TEMP/bench_results/benchmark_stdout.txt"
+
+      - name: Print benchmark and environment summary
+        if: always()
+        run: |
+          scripts/ci/benchmark/summarize_bench.py \
+            "$RUNNER_TEMP/bench_results/benchmark_stdout.txt" \
+            "$RUNNER_TEMP/bench_logs/current.env" \
+            "$RUNNER_TEMP/bench_logs/current.env" \
+            "$RUNNER_TEMP/bench_logs/current.env"
+
+      - name: Upload benchmark logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-logs
+          path: |
+            ${{ runner.temp }}/bench_logs
+            ${{ runner.temp }}/bench_results
