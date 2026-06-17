@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `test_unicycle.py` smoketest of basic ILQ example
 - `test_constrained_integrators.py` smoketest of basic AL example
 - `scripts/visuals/lady_bandit_guard_plot.py` for generating optional documentation plots outside the package
+- `scripts/visuals/lady_bandit_guard_nonlinear_plot.py` for generating optional plots for the nonlinear LBG example
 - `matplotlib` to optional dependencies to generate plots from `scripts/visuals`
 
 ### Changed
@@ -21,11 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - renamed `examples/unicycle1.py` to `examples/ir_unicycle.py` for clarity of its purpose
 - `examples/ir_unicycle.py` now mirrors `examples/unicycle.py` as an advanced IR companion example
 - renamed the legacy double-integrator LBG example to `examples/ir_lady_bandit_guard.py` and folded the non-plotting runner path into the example
+- renamed the legacy aerial LBG example to `examples/ir_lady_bandit_guard_nonlinear.py` and folded the non-plotting runner path into the example
 
 ### Removed 
 
 - `examples/run_unicycle1.py` to clarify/simplify examples
 - `examples/run_doubleint_lqlbg.py` and `examples/doubleint_lqlbg.json` to keep plotting/configuration helpers out of the package examples
+- `examples/run_aeriallbg1.py` and `examples/aeriallbg1_cfg.json` to keep plotting/configuration helpers out of the package examples
 
 ## [v0.6.1] - 2026.06.05
 

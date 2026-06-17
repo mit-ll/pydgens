@@ -1,38 +1,63 @@
 # Copyright 2026 MIT Lincoln Laboratory
 # SPDX-License-Identifier: MIT
 
-import jax.numpy as jnp
+"""
+Advanced example: a nonlinear Lady-Bandit-Guard game in IR form.
+
+This is the nonlinear/iLQ counterpart to ``ir_lady_bandit_guard.py``. The game
+logic is the same target-guarding story, but each player uses unicycle dynamics
+
+    x_player = [px, py, theta, speed]
+    u_player = [theta_dot, speed_dot]
+
+and the costs are generic nonlinear callables rather than LQ matrices.
+
+Use this example after reading ``unicycle.py``, ``ir_unicycle.py``, and
+``ir_lady_bandit_guard.py``. It shows how those ideas combine in a larger
+three-player IR game:
+
+    1. define a time grid
+    2. define joint continuous-time unicycle dynamics
+    3. define one nonlinear running cost per player
+    4. encode each player's control dimension with ``u_splits``
+    5. build the nonlinear IR game
+    6. seed iLQ with an initial operating point
+    7. solve with the iLQ solver
+"""
+
+from __future__ import annotations
+
 from types import SimpleNamespace
 
-from pydgens.ir.timetypes import TimeGrid
-from pydgens.ir.systemtypes import SampledContinuousSystemType1
+import jax.numpy as jnp
+
 from pydgens.ir.costtypes import PlayerCostSpecContinuous
 from pydgens.ir.gametypes import NonlinearGameType1
+from pydgens.ir.strategytypes import FixedStepAffineStrategies
+from pydgens.ir.systemtypes import (
+    SampledContinuousSystemType1,
+    propagate_system_trajectory,
+)
+from pydgens.ir.timetypes import TimeGrid
+from pydgens.solvers.ilqsolver import solve_ilqgame_feedback
 
 
 _EPS = 1e-8 # small number used to avoid divide by zero
 
-class AerialLBG1_C1:
+
+DEFAULT_INITIAL_STATE = jnp.array([
+    -10.0, 0.0, 0.0, 1.0,
+    10.0, 0.0, 3.14159, 1.0,
+    0.0, 10.0, -1.570795, 1.0,
+])
+
+
+class LadyBanditGuardNonlinear:
     '''
-    3-player target guarding game (i.e. Lady-Bandit-Guard) where each system is a simple 
-    3-DOF aircraft model moving in 2-dimensions 
+    Build the nonlinear IR representation of a 3-player Lady-Bandit-Guard game.
 
-    Structure: this is a pythonic (object-oriented) wrapper of a JAX-compatible (functional)
-    NonlinearGameType1 object. The purpose of this structure is meant to serve as a flexible
-    wrapper that packages parameters specific to the Aerial LBG1 game alongside a rigidly-defined,
-    JAX-comptabile game object used within an ilq game solver. This structure separates the 
-    problem-specific parameters out of the rigidly-defined NonlinearGameType1 object to avoid
-    the need to define intrecate, inflexible param datastructures into the dataclass objects
-    used in the ilq solvers. In a more pythonic paradigm, this would simply be accomplished
-    by extedning base classes of game types, however, this is not feasible/practical in the 
-    functional paradigm in JAX. 
-
-    Note that C1 is just a label attached to the particular collection of cost functions
-    defined in this module. A different set of cost functions could be defined but should
-    then receive a different cost functions identification label
-
-    The aircraft dynamics are based on the "4D unicycle" described
-    in Sec V of the paper:
+    Each player is a 2D unicycle. The dynamics are based on the "4D unicycle"
+    described in Sec V of the paper:
     > Fridovich-Keil, David, Vicenc Rubies-Royo, and Claire J. Tomlin. 
     > "An iterative quadratic method for general-sum differential games with 
     > feedback linearizable dynamics." 2020 IEEE International Conference on 
@@ -42,7 +67,7 @@ class AerialLBG1_C1:
     > Rusnak, Ilan. "The lady, the bandits and the body guards–a two team dynamic game." 
     > IFAC Proceedings Volumes 38, no. 1 (2005): 441-446.
 
-    The game dynamics are parameterized by:
+    The joint game state and control are parameterized by:
     - n (int) = 12: dimension of joint game state vector
     - m (int) = 6: dimension of joint game control vector 
     - x_t (jnp.ndarray size (n,)): is the joint state vector,
@@ -109,7 +134,7 @@ class AerialLBG1_C1:
     PARAMS.GAME_CTRL.I_GUARD_DVT = 5
 
     # default time components
-    DEFAULT_N_TIMENODES = 20
+    DEFAULT_N_TIMENODES = 10
     DEFAULT_TIMESTEP_SIZE = 1.0
 
     # default bandit cost weights
@@ -179,7 +204,6 @@ class AerialLBG1_C1:
         w_g_spd: float=DEFAULT_G_SPEED_WEIGHT,
         w_g_omg: float=DEFAULT_G_OMEGA_WEIGHT,
         w_g_acc: float=DEFAULT_G_ACCEL_WEIGHT,
-        cfg_desc: str=None
     ):
         """
         # Args:
@@ -213,7 +237,6 @@ class AerialLBG1_C1:
         - w_g_spd (float): guard's cost weight on cruise speed deviation
         - w_g_omg (float): guard's cost weight on control effort of turnrate
         - w_g_acc (float): guard's cost weight on control effort of linear acceleration
-        - cfg_desc (str): a description of the game parameter configuration (optional)
         """
 
         assert v_b_cruise >= 0
@@ -244,11 +267,10 @@ class AerialLBG1_C1:
         assert w_g_omg >= 0
         assert w_g_acc >= 0
 
-        # package time characteristics
+        # Step 1: define the time grid.
         tg = TimeGrid(nt=nt, dt=dt)
 
-        # package instance attributes for ease of use
-        self.cfg_desc = cfg_desc
+        # Store scalar game parameters used inside the running-cost callables.
         self.px_target = px_target
         self.py_target = py_target
         self.v_b_cruise = v_b_cruise
@@ -282,20 +304,21 @@ class AerialLBG1_C1:
         self.w_g_omg = w_g_omg
         self.w_g_acc = w_g_acc
 
-        # Unpack parameters for ease of use
+        # Step 4: encode player ownership of the joint control vector.
         N = self.PARAMS.N_PLAYERS
 
-        # encode the size of each player's subvector in the joint control vector u
         u_splits = N*[None]
         u_splits[self.PARAMS.BANDIT_PLAYER_IDX] = self.PARAMS.GAME_CTRL.NU_BANDIT
         u_splits[self.PARAMS.LADY_PLAYER_IDX] = self.PARAMS.GAME_CTRL.NU_LADY
         u_splits[self.PARAMS.GUARD_PLAYER_IDX] = self.PARAMS.GAME_CTRL.NU_GUARD
 
-        # encode each players cost function
-        # using lambda functions of staticmethods to avoid JAX tracing entire self object
+        # Step 3: define one running cost per player.
+        #
+        # The lambdas close over scalar weights, then call static methods so
+        # JAX does not trace the whole Python object.
         costs = N*[None]
         costs[self.PARAMS.BANDIT_PLAYER_IDX] = PlayerCostSpecContinuous(
-            running = lambda t, x, u: AerialLBG1_C1.bandit_cost(t, x, u, 
+            running = lambda t, x, u: LadyBanditGuardNonlinear.bandit_cost(t, x, u, 
                 params=self.PARAMS, 
                 px_target=self.px_target,
                 py_target=self.py_target,
@@ -312,7 +335,7 @@ class AerialLBG1_C1:
         )
         
         costs[self.PARAMS.LADY_PLAYER_IDX] = PlayerCostSpecContinuous(
-            running = lambda t, x, u: AerialLBG1_C1.lady_cost(t, x, u, 
+            running = lambda t, x, u: LadyBanditGuardNonlinear.lady_cost(t, x, u, 
                 params=self.PARAMS, 
                 px_target=self.px_target,
                 py_target=self.py_target,
@@ -329,7 +352,7 @@ class AerialLBG1_C1:
         )
         
         costs[self.PARAMS.GUARD_PLAYER_IDX] = PlayerCostSpecContinuous(
-            running = lambda t, x, u: AerialLBG1_C1.guard_cost(t, x, u, 
+            running = lambda t, x, u: LadyBanditGuardNonlinear.guard_cost(t, x, u, 
                 params=self.PARAMS, 
                 px_target=self.px_target,
                 py_target=self.py_target,
@@ -345,16 +368,15 @@ class AerialLBG1_C1:
             )
         )
         
-        # Instantiate the control system object
-        # not set as it's own instance variable because it will be encapulated in game
+        # Step 2: define the joint nonlinear dynamics.
         cs = SampledContinuousSystemType1(
             tg = tg,
             nx = self.PARAMS.GAME_STATE.NX,
             nu = self.PARAMS.GAME_CTRL.NU,
-            dynamics = lambda t, x, u: AerialLBG1_C1.dynamics(t, x, u, self.PARAMS)
+            dynamics = lambda t, x, u: LadyBanditGuardNonlinear.dynamics(t, x, u, self.PARAMS)
         )
         
-        # Compose the NonlinearGameType1 object for use in solver
+        # Step 5: build the nonlinear IR game.
         self.game = NonlinearGameType1(
             cs = cs,
             N = N,
@@ -471,37 +493,37 @@ class AerialLBG1_C1:
 
         # Minimize alignment error (minimize negative cosine) between bandit heading and lady position relative to bandit
         assert w_b_bl_align >= 0, f"weight of bandit-lady alignment cost must be non-negativee, got {w_b_bl_align}"
-        cost += - w_b_bl_align * AerialLBG1_C1.bandit_lady_alignment_cosine(t=t, x=x, u=u, params=params)
+        cost += - w_b_bl_align * LadyBanditGuardNonlinear.bandit_lady_alignment_cosine(t=t, x=x, u=u, params=params)
 
         # Minimize distance-squared between bandit and lady
         assert w_b_bl_dist >= 0, f"weight of bandit-lady proximity cost must be non-negative, got {w_b_bl_dist}"
-        cost += w_b_bl_dist * AerialLBG1_C1.bandit_lady_proximity(t=t, x=x, u=u, params=params)
+        cost += w_b_bl_dist * LadyBanditGuardNonlinear.bandit_lady_proximity(t=t, x=x, u=u, params=params)
 
         # Maximize alignment error (minimize cosine) between guard heading and bandit position relative to guard
         assert w_b_gb_align >= 0, f"weight of guard-bandit alignment cost must be non-negative, got {w_b_gb_align}"
-        cost += w_b_gb_align * AerialLBG1_C1.guard_bandit_alignment_cosine(t=t, x=x, u=u, params=params)
+        cost += w_b_gb_align * LadyBanditGuardNonlinear.guard_bandit_alignment_cosine(t=t, x=x, u=u, params=params)
 
         # Maximize distance-squared (minimize negative distance-squared) between guard and bandit
         assert w_b_gb_dist >= 0, f"weight of guard-bandit proximity cost must be non-negative, got {w_b_gb_dist}"
-        cost += - w_b_gb_dist * AerialLBG1_C1.guard_bandit_proximity(t=t, x=x, u=u, params=params)
+        cost += - w_b_gb_dist * LadyBanditGuardNonlinear.guard_bandit_proximity(t=t, x=x, u=u, params=params)
 
         # Maximize distance-squard (minimize negative distance-squared) between lady and target
         assert w_b_lt_dist >= 0, f"weight of lady-target proximity cost must be non-negative, got {w_b_lt_dist}"
-        cost += - w_b_lt_dist * AerialLBG1_C1.lady_target_deviation(
+        cost += - w_b_lt_dist * LadyBanditGuardNonlinear.lady_target_deviation(
             t=t, x=x, u=u, params=params, 
             px_target=px_target, py_target=py_target)
 
         # Minimize bandit speed deviation from cruise speed
         assert v_b_cruise > 0, f"bandit cruise velocity must be positive, got {v_b_cruise}"
         assert w_b_spd >= 0, f"weight on bandit cruise speed deviation must be non-negative, got {w_b_spd}"
-        cost += w_b_spd * AerialLBG1_C1.bandit_speed_deviation(t=t, x=x, u=u, params=params, v_target=v_b_cruise)
+        cost += w_b_spd * LadyBanditGuardNonlinear.bandit_speed_deviation(t=t, x=x, u=u, params=params, v_target=v_b_cruise)
 
         # Minimize control effort on turnrate and linear acceleration
         assert w_b_omg >= 0, f"weight on bandit turnrate control effort must be non-negative, got {w_b_omg}"
-        cost += w_b_omg * AerialLBG1_C1.bandit_turnrate_effort(t=t, x=x, u=u, params=params)
+        cost += w_b_omg * LadyBanditGuardNonlinear.bandit_turnrate_effort(t=t, x=x, u=u, params=params)
 
         assert w_b_acc >= 0, f"weight on bandit linear acceleration control effort must be non-negative, got {w_b_acc}"
-        cost += w_b_acc * AerialLBG1_C1.bandit_accel_effort(t=t, x=x, u=u, params=params)
+        cost += w_b_acc * LadyBanditGuardNonlinear.bandit_accel_effort(t=t, x=x, u=u, params=params)
 
         return cost
     
@@ -556,37 +578,37 @@ class AerialLBG1_C1:
 
         # Maximize alignment error (minimize cosine) between bandit heading and lady position relative to bandit
         assert w_l_bl_align >= 0, f"weight of bandit-lady alignment cost must be non-negativee, got {w_l_bl_align}"
-        cost += w_l_bl_align * AerialLBG1_C1.bandit_lady_alignment_cosine(t=t, x=x, u=u, params=params)
+        cost += w_l_bl_align * LadyBanditGuardNonlinear.bandit_lady_alignment_cosine(t=t, x=x, u=u, params=params)
 
         # Maximize distance-squared between bandit and lady
         assert w_l_bl_dist >= 0, f"weight of bandit-lady proximity cost must be non-negative, got {w_l_bl_dist}"
-        cost += - w_l_bl_dist * AerialLBG1_C1.bandit_lady_proximity(t=t, x=x, u=u, params=params)
+        cost += - w_l_bl_dist * LadyBanditGuardNonlinear.bandit_lady_proximity(t=t, x=x, u=u, params=params)
 
         # Minimize alignment error (minimize negative cosine) between guard heading and bandit position relative to guard
         assert w_l_gb_align >= 0, f"weight of guard-bandit alignment cost must be non-negative, got {w_l_gb_align}"
-        cost += - w_l_gb_align * AerialLBG1_C1.guard_bandit_alignment_cosine(t=t, x=x, u=u, params=params)
+        cost += - w_l_gb_align * LadyBanditGuardNonlinear.guard_bandit_alignment_cosine(t=t, x=x, u=u, params=params)
 
         # Minimize distance-squared (minimize distance-squared) between guard and bandit
         assert w_l_gb_dist >= 0, f"weight of guard-bandit proximity cost must be non-negative, got {w_l_gb_dist}"
-        cost += w_l_gb_dist * AerialLBG1_C1.guard_bandit_proximity(t=t, x=x, u=u, params=params)
+        cost += w_l_gb_dist * LadyBanditGuardNonlinear.guard_bandit_proximity(t=t, x=x, u=u, params=params)
 
         # Minimize distance-squared between lady and target
         assert w_l_lt_dist >= 0, f"weight of lady-target proximity cost must be non-negative, got {w_l_lt_dist}"
-        cost += w_l_lt_dist * AerialLBG1_C1.lady_target_deviation(
+        cost += w_l_lt_dist * LadyBanditGuardNonlinear.lady_target_deviation(
             t=t, x=x, u=u, params=params, 
             px_target=px_target, py_target=py_target)
 
         # Minimize lady speed deviation from cruise speed
         assert v_l_cruise > 0, f"lady cruise velocity must be positive, got {v_l_cruise}"
         assert w_l_spd >= 0, f"weight on lady cruise speed deviation must be non-negative, got {w_l_spd}"
-        cost += w_l_spd * AerialLBG1_C1.lady_speed_deviation(t=t, x=x, u=u, params=params, v_target=v_l_cruise)
+        cost += w_l_spd * LadyBanditGuardNonlinear.lady_speed_deviation(t=t, x=x, u=u, params=params, v_target=v_l_cruise)
 
         # Minimize control effort on turnrate and linear acceleration
         assert w_l_omg >= 0, f"weight on bandit turnrate control effort must be non-negative, got {w_l_omg}"
-        cost += w_l_omg * AerialLBG1_C1.lady_turnrate_effort(t=t, x=x, u=u, params=params)
+        cost += w_l_omg * LadyBanditGuardNonlinear.lady_turnrate_effort(t=t, x=x, u=u, params=params)
 
         assert w_l_acc >= 0, f"weight on lady linear acceleration control effort must be non-negative, got {w_l_acc}"
-        cost += w_l_acc * AerialLBG1_C1.lady_accel_effort(t=t, x=x, u=u, params=params)
+        cost += w_l_acc * LadyBanditGuardNonlinear.lady_accel_effort(t=t, x=x, u=u, params=params)
 
         return cost
     
@@ -641,37 +663,37 @@ class AerialLBG1_C1:
 
         # Maximize alignment error (minimize cosine) between bandit heading and lady position relative to bandit
         assert w_g_bl_align >= 0, f"weight of bandit-lady alignment cost must be non-negativee, got {w_g_bl_align}"
-        cost += w_g_bl_align * AerialLBG1_C1.bandit_lady_alignment_cosine(t=t, x=x, u=u, params=params)
+        cost += w_g_bl_align * LadyBanditGuardNonlinear.bandit_lady_alignment_cosine(t=t, x=x, u=u, params=params)
 
         # Maximize distance-squared between bandit and lady
         assert w_g_bl_dist >= 0, f"weight of bandit-lady proximity cost must be non-negative, got {w_g_bl_dist}"
-        cost += - w_g_bl_dist * AerialLBG1_C1.bandit_lady_proximity(t=t, x=x, u=u, params=params)
+        cost += - w_g_bl_dist * LadyBanditGuardNonlinear.bandit_lady_proximity(t=t, x=x, u=u, params=params)
 
         # Minimize alignment error (minimize negative cosine) between guard heading and bandit position relative to guard
         assert w_g_gb_align >= 0, f"weight of guard-bandit alignment cost must be non-negative, got {w_g_gb_align}"
-        cost += - w_g_gb_align * AerialLBG1_C1.guard_bandit_alignment_cosine(t=t, x=x, u=u, params=params)
+        cost += - w_g_gb_align * LadyBanditGuardNonlinear.guard_bandit_alignment_cosine(t=t, x=x, u=u, params=params)
 
         # Minimize distance-squared (minimize distance-squared) between guard and bandit
         assert w_g_gb_dist >= 0, f"weight of guard-bandit proximity cost must be non-negative, got {w_g_gb_dist}"
-        cost += w_g_gb_dist * AerialLBG1_C1.guard_bandit_proximity(t=t, x=x, u=u, params=params)
+        cost += w_g_gb_dist * LadyBanditGuardNonlinear.guard_bandit_proximity(t=t, x=x, u=u, params=params)
 
         # Minimize distance-squared between lady and target
         assert w_g_lt_dist >= 0, f"weight of lady-target proximity cost must be non-negative, got {w_g_lt_dist}"
-        cost += w_g_lt_dist * AerialLBG1_C1.lady_target_deviation(
+        cost += w_g_lt_dist * LadyBanditGuardNonlinear.lady_target_deviation(
             t=t, x=x, u=u, params=params, 
             px_target=px_target, py_target=py_target)
 
         # Minimize guard speed deviation from cruise speed
         assert v_g_cruise > 0, f"guard cruise velocity must be positive, got {v_g_cruise}"
         assert w_g_spd >= 0, f"weight on guard cruise speed deviation must be non-negative, got {w_g_spd}"
-        cost += w_g_spd * AerialLBG1_C1.guard_speed_deviation(t=t, x=x, u=u, params=params, v_target=v_g_cruise)
+        cost += w_g_spd * LadyBanditGuardNonlinear.guard_speed_deviation(t=t, x=x, u=u, params=params, v_target=v_g_cruise)
 
         # Minimize control effort on turnrate and linear acceleration
         assert w_g_omg >= 0, f"weight on guard turnrate control effort must be non-negative, got {w_g_omg}"
-        cost += w_g_omg * AerialLBG1_C1.guard_turnrate_effort(t=t, x=x, u=u, params=params)
+        cost += w_g_omg * LadyBanditGuardNonlinear.guard_turnrate_effort(t=t, x=x, u=u, params=params)
 
         assert w_g_acc >= 0, f"weight on guard linear acceleration control effort must be non-negative, got {w_g_acc}"
-        cost += w_g_acc * AerialLBG1_C1.guard_accel_effort(t=t, x=x, u=u, params=params)
+        cost += w_g_acc * LadyBanditGuardNonlinear.guard_accel_effort(t=t, x=x, u=u, params=params)
 
         return cost
     
@@ -1049,8 +1071,8 @@ class AerialLBG1_C1:
             turnrate squared
         """
 
-        # get turnrate of lady with respect to world frame
-        omg_g_w = u[params.GAME_CTRL.I_LADY_DTH]
+        # get turnrate of guard with respect to world frame
+        omg_g_w = u[params.GAME_CTRL.I_GUARD_DTH]
         
         return omg_g_w * omg_g_w
     
@@ -1182,3 +1204,90 @@ class AerialLBG1_C1:
         py_l_t__w = x[i_py_l] - py_target
         
         return px_l_t__w * px_l_t__w + py_l_t__w * py_l_t__w
+
+
+def initial_strategy(game: NonlinearGameType1) -> FixedStepAffineStrategies:
+    """
+    Build the initial affine strategy used to seed iLQ.
+
+    The iLQ solver improves a local operating point. For an example, a zero
+    strategy is a readable starting point: all players initially apply zero
+    turn-rate and acceleration commands, then the solver iteratively refines
+    both the trajectory and feedback strategy.
+    """
+    P = jnp.zeros((game.nsteps, game.nu, game.nx))
+    alpha = jnp.zeros((game.nsteps, game.nu))
+    return FixedStepAffineStrategies(tg=game.tg, P=P, alpha=alpha)
+
+
+def solve_example():
+    """
+    Build, initialize, and solve the nonlinear Lady-Bandit-Guard IR example.
+
+    Returns
+    -------
+    tuple
+        ``(lbg, converged, trajectory, strategy)`` where ``lbg`` is the
+        example wrapper, ``trajectory`` is the final operating trajectory, and
+        ``strategy`` is the feedback strategy returned by the iLQ solver.
+    """
+    lbg = LadyBanditGuardNonlinear()
+    init_strat = initial_strategy(lbg.game)
+    init_traj = propagate_system_trajectory(
+        lbg.game.cs,
+        x0=DEFAULT_INITIAL_STATE,
+        strategy=init_strat,
+    )
+
+    converged, trajectory, strategy = solve_ilqgame_feedback(
+        lbg.game,
+        DEFAULT_INITIAL_STATE,
+        init_traj=init_traj,
+        init_strat=init_strat,
+        backtrack_max_iters=10,
+    )
+
+    return lbg, converged, trajectory, strategy
+
+
+def main() -> None:
+    lbg, converged, trajectory, strategy = solve_example()
+
+    xs = trajectory.xs
+    us = trajectory.us
+    p = lbg.PARAMS
+    bandit_pos_idx = jnp.asarray([
+        p.GAME_STATE.I_BANDIT_PX,
+        p.GAME_STATE.I_BANDIT_PY,
+    ])
+    lady_pos_idx = jnp.asarray([
+        p.GAME_STATE.I_LADY_PX,
+        p.GAME_STATE.I_LADY_PY,
+    ])
+    guard_pos_idx = jnp.asarray([
+        p.GAME_STATE.I_GUARD_PX,
+        p.GAME_STATE.I_GUARD_PY,
+    ])
+
+    print("Nonlinear Lady-Bandit-Guard IR example solved.")
+    print(f"Converged: {converged}")
+    print(f"Strategy shape: P={strategy.P.shape}, alpha={strategy.alpha.shape}")
+    print(f"Trajectory shape: xs={xs.shape}, us={us.shape}")
+    print("Initial positions:")
+    print(
+        "  "
+        f"bandit={xs[0, bandit_pos_idx]}, "
+        f"lady={xs[0, lady_pos_idx]}, "
+        f"guard={xs[0, guard_pos_idx]}"
+    )
+    print("Final positions:")
+    print(
+        "  "
+        f"bandit={xs[-1, bandit_pos_idx]}, "
+        f"lady={xs[-1, lady_pos_idx]}, "
+        f"guard={xs[-1, guard_pos_idx]}"
+    )
+
+
+if __name__ == "__main__":
+    main()

@@ -4,7 +4,7 @@
 import pytest
 import jax.numpy as jnp
 
-from pydgens.examples.aeriallbg1 import AerialLBG1_C1
+from pydgens.examples.ir_lady_bandit_guard_nonlinear import LadyBanditGuardNonlinear
 from pydgens.ir.trajectorytypes import FixedStepSystemTrajectory
 from pydgens.ir.strategytypes import FixedStepAffineStrategies
 from pydgens.ir.costtypes import (
@@ -16,7 +16,7 @@ from pydgens.solvers.ilqsolver import solve_ilqgame_feedback
 
 @pytest.fixture
 def lbg1():
-    return AerialLBG1_C1()
+    return LadyBanditGuardNonlinear()
 
 @pytest.mark.parametrize("x,dx",
     [
@@ -223,7 +223,7 @@ def test_bandit_cost_components():
     t = 0.0
     x = jnp.asarray([ -5.556,  -9.633,  -0.139,  -4.465,   4.552,   4.976,   1.516,   0.227,  17.906, -8.96, -16.503, 9.062])
     u = jnp.asarray([-4.908,  9.381, -6.793,  8.674, -0.627, -1.191])
-    lbg1 = AerialLBG1_C1(
+    lbg1 = LadyBanditGuardNonlinear(
         px_target = -12.087,
         py_target = 8.754,
         v_b_cruise = 65.13,
@@ -393,7 +393,7 @@ def test_lady_cost_components():
     t = 0.0
     x = jnp.asarray([ -2.791,  12.611,   3.257, -17.343, -15.026,  16.302,  -5.911,   3.35,    7.827,  2.227,  -2.327,   7.072])
     u = jnp.asarray([-18.685,   1.403,  -3.805,   0.419,   4.469,  -8.042])
-    lbg1 = AerialLBG1_C1(
+    lbg1 = LadyBanditGuardNonlinear(
         px_target = -5.7,
         py_target = 15.369,
         v_l_cruise = 6.482,
@@ -562,7 +562,7 @@ def test_guard_cost_components():
     t = 0.0
     x = jnp.asarray([12.82, -15.095, 1.61, 2.171, 2.798, 3.649, -7.378, 5.781, -8.615, -5.856, 11.777, 7.999])
     u = jnp.asarray([19.188, 15.052, -7.286, -2.191, -6.718, 5.298])
-    lbg1 = AerialLBG1_C1(
+    lbg1 = LadyBanditGuardNonlinear(
         px_target = 6.81,
         py_target = 1.393,
         v_g_cruise = 35.598,
@@ -762,7 +762,7 @@ def test_cost_quadratization_trajectory(lbg1):
     pass
 
 @pytest.mark.slow
-def test_solve_aeriallbg1_smoketest(lbg1):
+def test_solve_ir_lady_bandit_guard_nonlinear_smoketest(lbg1):
     # Run the iterative linear-quadratic solver on the 3player target guarding problem
 
     # ~~ ARRANGE ~~

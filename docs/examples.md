@@ -38,6 +38,14 @@ Build and solve a richer linear-quadratic Lady-Bandit-Guard game directly with t
 python src/pydgens/examples/ir_lady_bandit_guard.py
 ```
 
+## IR Nonlinear Lady-Bandit-Guard
+
+Build and solve the nonlinear unicycle-dynamics Lady-Bandit-Guard counterpart directly with the iLQ solver's IR objects:
+
+```bash
+python src/pydgens/examples/ir_lady_bandit_guard_nonlinear.py
+```
+
 ## Constrained Integrators
 
 Run the augmented-Lagrangian (`AL`) solver on a constrained nonlinear game with bounded controls:

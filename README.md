@@ -50,6 +50,12 @@ Run a richer linear-quadratic Lady-Bandit-Guard game built directly with the low
 python src/pydgens/examples/ir_lady_bandit_guard.py
 ```
 
+Run the nonlinear unicycle-dynamics Lady-Bandit-Guard counterpart built directly with the lower-level IR interfaces:
+
+```bash
+python src/pydgens/examples/ir_lady_bandit_guard_nonlinear.py
+```
+
 Run a constrained two-player integrator game solved with the augmented-Lagrangian solver:
 
 ```bash
