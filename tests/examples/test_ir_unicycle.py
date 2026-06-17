@@ -17,7 +17,7 @@ from pydgens.utils.utils import is_block_diagonal
 
 
 @pytest.fixture
-def uni1():
+def ir_unicycle():
     return Unicycle()
 
 @pytest.mark.parametrize("x,dx",
@@ -26,7 +26,7 @@ def uni1():
         ([0, 0, 0, 1.0], [1.0, 0, 0, 0]),
     ]
 )
-def test_dynamics_no_input(uni1, x, dx):
+def test_dynamics_no_input(ir_unicycle, x, dx):
     # check that state derivatives match expectations with no inputs
 
     # ~~ ARRANGE ~~
@@ -36,7 +36,7 @@ def test_dynamics_no_input(uni1, x, dx):
     dx_exp = jnp.asarray(dx)
 
     # ~~ ACT ~~
-    dx_act = uni1.game.dynamics(0, x, u)
+    dx_act = ir_unicycle.game.dynamics(0, x, u)
 
     # ~~ ASSERT ~~
     assert jnp.allclose(dx_exp, dx_act, atol=1e-6)
@@ -47,7 +47,7 @@ def test_dynamics_no_input(uni1, x, dx):
         ([0, 0, 0, 0], [0, 1.0]),
     ]
 )
-def test_dynamics_w_input(uni1, x, u):
+def test_dynamics_w_input(ir_unicycle, x, u):
     # check that state derivatives match hard-coded computations
 
     # ~~ ARRANGE ~~
@@ -58,16 +58,16 @@ def test_dynamics_w_input(uni1, x, u):
     dx_exp = jnp.array([x[3]*jnp.cos(x[2]), x[3]*jnp.sin(x[2]), u[0], u[1]])
 
     # ~~ ACT ~~
-    dx = uni1.game.dynamics(0, x, u)
+    dx = ir_unicycle.game.dynamics(0, x, u)
 
     # ~~ ASSERT ~~
     assert jnp.allclose(dx, dx_exp)
 
-def test_approx_lqgame_block_diagonal_cost(uni1):
+def test_approx_lqgame_block_diagonal_cost(ir_unicycle):
     """ensure that lq-approximating produces block-diagonal R matrices, since this check is turned off in ilqsolver"""
 
     # ~~ ARRANGE ~~
-    nlgame = uni1.game
+    nlgame = ir_unicycle.game
 
     # initial state
     x0 = jnp.array([1.0, 1.0, 0.0, 0.5])
@@ -95,8 +95,8 @@ def test_approx_lqgame_block_diagonal_cost(uni1):
             assert is_block_diagonal(R=lqgame.R[k,i], u_splits=nlgame.u_splits)
 
 @pytest.mark.slow
-def test_solve_unicycle1_converge(uni1):
-    # Run the iterative linear-quadratic solver on the 3player target guarding problem
+def test_solve_ir_unicycle_converge(ir_unicycle):
+    # Run the iterative linear-quadratic solver on the IR unicycle problem
 
     # ~~ ARRANGE ~~
 
@@ -106,7 +106,7 @@ def test_solve_unicycle1_converge(uni1):
     # ~~ ACT ~~
 
     # compute nash strategy for nonlinear game
-    conv, nl_traj, nl_strat = solve_ilqgame_feedback(uni1.game, x0)
+    conv, nl_traj, nl_strat = solve_ilqgame_feedback(ir_unicycle.game, x0)
 
     # ~~ ASSERT ~~
     
@@ -117,9 +117,9 @@ def make_unicycle_solver_inputs_1():
     """produce standardized inputs for ilqsolver for unicycle problem"""
 
     # game wrapper and initial state to be solved
-    uni1 = Unicycle(nt=20, dt=0.1)
+    ir_unicycle = Unicycle(nt=20, dt=0.1)
     x0 = jnp.array([1.0, 1.0, 0.0, 0.5])
-    nlgame = uni1.game
+    nlgame = ir_unicycle.game
 
     # optional solver inputs specificied for future consistency
     init_traj = FixedStepSystemTrajectory(
@@ -142,7 +142,7 @@ def make_unicycle_solver_inputs_1():
     logger = None
 
     return (
-        uni1, x0, init_traj, init_strat, 
+        ir_unicycle, x0, init_traj, init_strat, 
         max_iters, 
         converged_max_diff, 
         backtrack_max_iters, 
@@ -158,7 +158,7 @@ def test_unicycle_solve_approved_outputs_1():
     """regression test to ensure unicycle solution continues to match approved results"""
     # ~~ ARRANGE ~~
 
-    (uni1, x0, init_traj, init_strat, 
+    (ir_unicycle, x0, init_traj, init_strat, 
         max_iters, 
         converged_max_diff, 
         backtrack_max_iters, 
@@ -260,7 +260,7 @@ def test_unicycle_solve_approved_outputs_1():
     # ~~ ACT & ASSERT ~~
 
     conv, traj, strat = solve_ilqgame_feedback(
-        nlgame=uni1.game,
+        nlgame=ir_unicycle.game,
         x0=x0,
         init_traj=init_traj,
         init_strat=init_strat,
@@ -281,11 +281,11 @@ def test_unicycle_solve_approved_outputs_1():
 
 @pytest.mark.regression
 @pytest.mark.slow
-@pytest.mark.benchmark(group="unicycle1-001")
+@pytest.mark.benchmark(group="ir-unicycle-001")
 def test_unicycle_solve_cold_perf(benchmark):
     """benchmark the cold-run performance of solving unicycle problem"""
     # ~~ ARRANGE ~~
-    (uni1, x0, init_traj, init_strat, 
+    (ir_unicycle, x0, init_traj, init_strat, 
         max_iters, 
         converged_max_diff, 
         backtrack_max_iters, 
@@ -304,7 +304,7 @@ def test_unicycle_solve_cold_perf(benchmark):
     # t0 = time.perf_counter()
     def cold_run():
         results = solve_ilqgame_feedback(
-            nlgame=uni1.game,
+            nlgame=ir_unicycle.game,
             x0=x0,
             init_traj=init_traj,
             init_strat=init_strat,
@@ -331,11 +331,11 @@ def test_unicycle_solve_cold_perf(benchmark):
 
 @pytest.mark.regression
 @pytest.mark.slow
-@pytest.mark.benchmark(group="unicycle1-002")
+@pytest.mark.benchmark(group="ir-unicycle-002")
 def test_unicycle_solve_warm_perf(benchmark):
     """benchmark the warm-started performance of solving unicycle problem"""
     # ~~ ARRANGE ~~
-    (uni1, x0, init_traj, init_strat, 
+    (ir_unicycle, x0, init_traj, init_strat, 
         max_iters, 
         converged_max_diff, 
         backtrack_max_iters, 
@@ -348,7 +348,7 @@ def test_unicycle_solve_warm_perf(benchmark):
     # ~~ ACT & ASSERT ~~
     def run():
         results = solve_ilqgame_feedback(
-            nlgame=uni1.game,
+            nlgame=ir_unicycle.game,
             x0=x0,
             init_traj=init_traj,
             init_strat=init_strat,
@@ -369,5 +369,4 @@ def test_unicycle_solve_warm_perf(benchmark):
     
     # benchmark the warmstarted solver
     benchmark(run)
-
 

@@ -38,6 +38,12 @@ Run a nonlinear two-player unicycle game solved with the iterative LQ solver:
 python src/pydgens/examples/unicycle.py
 ```
 
+Run the same unicycle game built directly with the lower-level IR interfaces:
+
+```bash
+python src/pydgens/examples/ir_unicycle.py
+```
+
 Run a constrained two-player integrator game solved with the augmented-Lagrangian solver:
 
 ```bash

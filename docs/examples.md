@@ -22,6 +22,14 @@ Run the iterative linear-quadratic solver (`iLQ`) on a nonlinear game where two 
 python src/pydgens/examples/unicycle.py
 ```
 
+## IR Two-Player Unicycle
+
+Build the same unicycle game directly with the intermediate representation (`IR`) objects used by the iLQ solver:
+
+```bash
+python src/pydgens/examples/ir_unicycle.py
+```
+
 ## Constrained Integrators
 
 Run the augmented-Lagrangian (`AL`) solver on a constrained nonlinear game with bounded controls:
