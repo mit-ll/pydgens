@@ -44,6 +44,7 @@ from typing import Tuple
 
 import jax.numpy as jnp
 
+from pydgens.examples._ir_reporting import format_ir_al_summary
 import pydgens.ir.systemtypes as systypes
 import pydgens.ir.gametypes as gametypes
 import pydgens.ir.trajectorytypes as trajtypes
@@ -249,9 +250,16 @@ def solve_example():
 def main():
     nlgame, op_out, al_out, diag = solve_example()
 
-    print("\n=== AL solve summary ===")
-    print(f"converged: {diag.converged}  reason: {diag.reason}  iters: {diag.iters}")
+    print(
+        format_ir_al_summary(
+            "IR Solve Summary",
+            primal_dual_trajectory=op_out,
+            al_state=al_out,
+            diagnostics=diag,
+        )
+    )
     if diag.history:
+        print("\n=== solver-specific diagnostics ===")
         print(f"last outer diag:\n  {diag.history[-1]}")
 
     xs = op_out.xs
@@ -268,7 +276,8 @@ def main():
             u1, u2 = float("nan"), float("nan")
         return f"k={k:02d}  p1={p1:+.3f} p2={p2:+.3f}  u1={u1:+.3f} u2={u2:+.3f}"
 
-    print("\n=== trajectory sample ===")
+    print("\n=== example-specific checks ===")
+    print("trajectory sample:")
     print(row(0))
     print(row(mid))
     print(row(nt - 2))
@@ -277,7 +286,7 @@ def main():
     # Quick checks
     u1_max = float(jnp.max(jnp.abs(us[:, 0]))) if us.size else 0.0
     u2_max = float(jnp.max(jnp.abs(us[:, 1]))) if us.size else 0.0
-    print("\n=== quick checks ===")
+    print("\nquick checks:")
     print(f"max |u1| over stages: {u1_max:.3f}")
     print(f"max |u2| over stages: {u2_max:.3f}")
 
@@ -287,7 +296,7 @@ def main():
     p0 = xs[0]
     pT = xs[-1]
     u_const = (pT - p0) / T
-    print("\n=== intuition check ===")
+    print("\nintuition check:")
     print(f"implied constant u from achieved endpoints: u1={float(u_const[0]):+.3f}, u2={float(u_const[1]):+.3f}")
     print("(If bounds are active, you may see saturation; otherwise u should be moderate and smooth.)")
 

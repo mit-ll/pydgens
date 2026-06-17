@@ -15,6 +15,7 @@ from types import SimpleNamespace
 
 import jax.numpy as jnp
 
+from pydgens.examples._ir_reporting import format_ir_feedback_summary
 from pydgens.ir.gametypes import LinearQuadraticGameType1
 from pydgens.ir.systemtypes import (
     LinearDiscreteSystemType1,
@@ -792,9 +793,16 @@ def main() -> None:
         p.GAME_AUX_STATE.I_GUARD_PY,
     ])
 
-    print("Lady-Bandit-Guard LQ IR example solved.")
-    print(f"Strategy shape: P={strategy.P.shape}, alpha={strategy.alpha.shape}")
-    print(f"Trajectory shape: xs={xs.shape}, us={us.shape}")
+    print(
+        format_ir_feedback_summary(
+            "IR Solve Summary",
+            solver="lq",
+            trajectory=trajectory,
+            strategy=strategy,
+            converged=True,
+        )
+    )
+    print("\n=== example-specific checks ===")
     print("Initial positions:")
     print(
         "  "

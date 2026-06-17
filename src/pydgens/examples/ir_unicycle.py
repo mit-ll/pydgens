@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import jax.numpy as jnp
 
+from pydgens.examples._ir_reporting import format_ir_feedback_summary
 from pydgens.ir.costtypes import PlayerCostSpecContinuous
 from pydgens.ir.gametypes import NonlinearGameType1
 from pydgens.ir.systemtypes import SampledContinuousSystemType1
@@ -200,15 +201,18 @@ def main() -> None:
     turn_rate_controls = joint_controls[:, 0]
     accel_controls = joint_controls[:, 1]
 
-    print("Unicycle iLQ IR example solved.")
-    print(f"Converged: {converged}")
-    print(f"Initial state: {states[0]}")
-    print(f"Final state:   {states[-1]}")
+    print(
+        format_ir_feedback_summary(
+            "IR Solve Summary",
+            solver="ilq",
+            converged=converged,
+            trajectory=trajectory,
+            strategy=strategy,
+        )
+    )
+    print("\n=== example-specific checks ===")
     print(f"First 5 turn-rate controls: {turn_rate_controls[:5]}")
     print(f"First 5 acceleration controls: {accel_controls[:5]}")
-
-    # Keep ``strategy`` visible for readers who are exploring solver internals.
-    print(f"Strategy type: {type(strategy).__name__}")
 
 
 if __name__ == "__main__":

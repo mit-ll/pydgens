@@ -27,6 +27,7 @@ from typing import Tuple
 
 import jax.numpy as jnp
 
+from pydgens.examples._ir_reporting import format_ir_al_summary
 import pydgens.ir.systemtypes as systypes
 import pydgens.ir.gametypes as gametypes
 import pydgens.ir.trajectorytypes as trajtypes
@@ -358,9 +359,16 @@ def main():
 
     nlgame, op_out, al_out, diag = solve_diagnostic_example()
 
-    print("\n=== AL solve summary ===")
-    print(f"converged: {diag.converged}  reason: {diag.reason}  iters: {diag.iters}")
+    print(
+        format_ir_al_summary(
+            "IR Solve Summary",
+            primal_dual_trajectory=op_out,
+            al_state=al_out,
+            diagnostics=diag,
+        )
+    )
     if diag.history:
+        print("\n=== solver-specific diagnostics ===")
         print(f"last outer diag:\n  {diag.history[-1]}")
 
     # Show a few trajectory rows (start/mid/end)
@@ -377,7 +385,8 @@ def main():
             a1, a2 = float("nan"), float("nan")
         return f"k={k:02d}  p1={p1:+.3f} v1={v1:+.3f}  p2={p2:+.3f} v2={v2:+.3f}  a1={a1:+.3f} a2={a2:+.3f}"
 
-    print("\n=== trajectory sample ===")
+    print("\n=== example-specific checks ===")
+    print("trajectory sample:")
     print(row(0))
     print(row(mid))
     print(row(nt - 2))
@@ -386,7 +395,7 @@ def main():
     # Quick feasibility sanity checks (not exhaustive)
     p_sep_min = float(jnp.min(xs[:-1, x_p(1)] - xs[:-1, x_p(0)]))
     v_min = float(jnp.min(jnp.array([xs[:-1, x_v(0)], xs[:-1, x_v(1)]])))
-    print("\n=== quick checks ===")
+    print("\nquick checks:")
     print(f"min separation over stages: {p_sep_min:.3f}")
     print(f"min speed over stages:      {v_min:.3f}")
 
