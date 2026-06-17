@@ -282,8 +282,11 @@ def main() -> None:
     assert jnp.allclose(u2_computed, u2_expected, atol=1e-8)
     assert jnp.allclose(x1_computed, x1_expected, atol=1e-8)
 
-    # Keep the console output beginner-friendly and minimal.
-    print("Tug-of-war example solved successfully.")
+    print()
+    print(solution.format_summary("Tug-of-War"))
+
+    print("\nADDED CHECKS:")
+    print("analytic match: True")
     print(f"u1* = {float(u1_computed): .6f}")
     print(f"u2* = {float(u2_computed): .6f}")
     print(f"x1* = {float(x1_computed): .6f}")

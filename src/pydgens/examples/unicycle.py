@@ -263,10 +263,10 @@ def main() -> None:
     turn_rate_controls = joint_controls[:, player_turn.joint_ctrl_slice].squeeze(-1)
     accel_controls = joint_controls[:, player_speed.joint_ctrl_slice].squeeze(-1)
 
-    print("Unicycle iLQ example solved.")
-    print(f"Converged: {solution.converged}")
-    print(f"Initial state: {states[0]}")
-    print(f"Final state:   {states[-1]}")
+    print()
+    print(solution.format_summary("Two-Player Unicycle"))
+
+    print("\nADDED CHECKS:")
     print(f"First 5 turn-rate controls: {turn_rate_controls[:5]}")
     print(f"First 5 acceleration controls: {accel_controls[:5]}")
 

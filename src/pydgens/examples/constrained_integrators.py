@@ -238,6 +238,12 @@ def main() -> None:
     #   - the state trajectory
     #   - the control trajectory
     #   - whether the control bounds were respected
+
+    print()
+    print(result.format_summary("Constrained Integrators"))
+
+    print("\nADDED CHECKS:")
+
     pdtraj = result.primal_dual_trajectory
     diag = result.diagnostics
 
@@ -247,11 +253,6 @@ def main() -> None:
     nt = xs.shape[0]
     nsteps = us.shape[0]
     mid = nt // 2
-
-    print("\n=== Constrained Integrators (AL Frontend) ===")
-    print(f"converged: {diag.converged}")
-    print(f"reason:    {diag.reason}")
-    print(f"iters:     {diag.iters}")
 
     if diag.history:
         print("\nlast outer diagnostics:")
@@ -278,7 +279,6 @@ def main() -> None:
     max_u1 = float(jnp.max(jnp.abs(us[:, 0]))) if us.size else 0.0
     max_u2 = float(jnp.max(jnp.abs(us[:, 1]))) if us.size else 0.0
 
-    print("\nquick checks:")
     print(f"max |u1| = {max_u1:.3f}   (bound {u_max:.3f})")
     print(f"max |u2| = {max_u2:.3f}   (bound {u_max:.3f})")
     print(f"final state = {jnp.asarray(xs[-1])}")

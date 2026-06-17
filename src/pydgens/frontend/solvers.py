@@ -119,6 +119,49 @@ class SolveResult:
 
         return None
 
+    def format_summary(self, title: str = "Solve Result") -> str:
+        """
+        Return a compact human-readable summary of the solve output.
+
+        This is intended for example scripts and quick interactive use.
+        Domain-specific reporting can still be layered on top in each example.
+        """
+        lines = [f"=== {title} ===", f"solver:    {self.method}"]
+
+        if self.converged is not None:
+            lines.append(f"converged: {self.converged}")
+
+        diag = self.diagnostics
+        reason = getattr(diag, "reason", None)
+        iters = getattr(diag, "iters", None)
+        if reason is not None:
+            lines.append(f"reason:    {reason}")
+        if iters is not None:
+            lines.append(f"iters:     {iters}")
+
+        states = self.states
+        if states is not None:
+            lines.append(f"states:    shape={states.shape}")
+            lines.append(f"x0:        {jnp.asarray(states[0])}")
+            lines.append(f"xT:        {jnp.asarray(states[-1])}")
+
+        joint_controls = self.joint_controls
+        if joint_controls is not None:
+            lines.append(f"controls:  shape={joint_controls.shape}")
+            if joint_controls.size:
+                lines.append(f"u[0]:      {jnp.asarray(joint_controls[0])}")
+                lines.append(f"u[-1]:     {jnp.asarray(joint_controls[-1])}")
+            else:
+                lines.append("u[0]:      []")
+
+        return "\n".join(lines)
+
+    def __str__(self) -> str:
+        """
+        Default string form for quick interactive inspection.
+        """
+        return self.format_summary()
+
 
 def solve(
     game,
