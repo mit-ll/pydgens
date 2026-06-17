@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `examples/constrained_integrators.py` removing specific args for solver to make example simpler, more friendly for a first-time user
+- renamed `examples/unicycle1.py` to `examples/ir_unicycle.py` for clarity of its purpose
+
+### Removed 
+
+- `examples/run_unicycle1.py` to clarify/simplify examples
 
 ## [v0.6.1] - 2026.06.05
 

@@ -7,7 +7,7 @@ import jax
 import numpy as np
 import jax.numpy as jnp
 
-from pydgens.examples.unicycle1 import Unicycle1
+from pydgens.examples.ir_unicycle import Unicycle
 from pydgens.ir.strategytypes import FixedStepAffineStrategies
 from pydgens.ir.trajectorytypes import FixedStepSystemTrajectory
 from pydgens.ir.systemtypes import propagate_system_trajectory
@@ -18,7 +18,7 @@ from pydgens.utils.utils import is_block_diagonal
 
 @pytest.fixture
 def uni1():
-    return Unicycle1()
+    return Unicycle()
 
 @pytest.mark.parametrize("x,dx",
     [
@@ -117,7 +117,7 @@ def make_unicycle_solver_inputs_1():
     """produce standardized inputs for ilqsolver for unicycle problem"""
 
     # game wrapper and initial state to be solved
-    uni1 = Unicycle1(nt=20, dt=0.1)
+    uni1 = Unicycle(nt=20, dt=0.1)
     x0 = jnp.array([1.0, 1.0, 0.0, 0.5])
     nlgame = uni1.game
 

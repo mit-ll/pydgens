@@ -3,14 +3,18 @@
 
 # based on minimal_example.jl in https://github.com/JuliaGameTheoreticPlanning/iLQGames.jl/blob/v0.2.7/examples/minimal_example.jl
 
+import logging
 import jax.numpy as jnp
+
+from jax import profiler
 
 from pydgens.ir.timetypes import TimeGrid
 from pydgens.ir.systemtypes import SampledContinuousSystemType1
 from pydgens.ir.costtypes import PlayerCostSpecContinuous
 from pydgens.ir.gametypes import NonlinearGameType1
+from pydgens.solvers.ilqsolver import solve_ilqgame_feedback
 
-class Unicycle1:
+class Unicycle:
     '''
     2-player control of a unicycle system where 
     player-1 wants the system near the origin
@@ -74,3 +78,33 @@ class Unicycle1:
             costs = costs,
             u_splits = jnp.asarray(u_splits)
         )
+
+def main():
+    # create logger to pass to solver
+    logging.basicConfig(level=logging.INFO) # global config of root logger, to be run once
+    logger = logging.getLogger("ilq_solver")
+    logger.setLevel(logging.DEBUG)
+
+    # start code profiler to identify bottlenecks in code
+    profiler.start_trace("/tmp/jax_trace")
+
+    # instantiate game wrapper object
+    uni1 = Unicycle(nt=34, dt=0.1)
+
+    # define initial state
+    x0 = jnp.array([4.0, 4.0, 0.0, 0.0])
+
+    # solve for feedback Nash strategy of all players
+    conv, nl_traj, nl_strat = solve_ilqgame_feedback(uni1.game, x0, logger=logger)
+
+    # stop code profiler to identify bottlenecks in code
+    profiler.stop_trace()
+
+    # print results
+    print(f"Results:")
+    print(f"--- converged: {conv}")
+    print(f"--- trajectory: {nl_traj}")
+    print(f"--- strategy: {nl_strat}")
+
+if __name__ == "__main__":
+    main()
