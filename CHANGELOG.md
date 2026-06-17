@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `test_unicycle.py` smoketest of basic ILQ example
 - `test_constrained_integrators.py` smoketest of basic AL example
 - `scripts/visuals/lady_bandit_guard_plot.py` for generating optional documentation plots outside the package
+- `matplotlib` to optional dependencies to generate plots from `scripts/visuals`
 
 ### Changed
 

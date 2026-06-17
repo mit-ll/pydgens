@@ -4,21 +4,13 @@
 """
 Advanced example: a linear-quadratic Lady-Bandit-Guard game in IR form.
 
-This example is intentionally lower-level than the beginner examples. It
-constructs the ``LinearQuadraticGameType1`` matrices directly, which makes it
-useful for users who want to understand or customize the intermediate
-representation (IR) consumed by the LQ solver.
-
-The public path through this module uses ``LadyBanditGuardLQ``. A simpler
-``LadyBanditGuardDistanceLQ`` variant is kept because it is useful for tests
-and experimentation, but the alignment-and-distance version is the example
-worth reading first.
+This example is intentionally lower-level than the beginner examples. It shows
+how to construct a ``LinearQuadraticGameType1`` directly from dynamics and
+cost matrices, then solve it with the LQ solver.
 """
 
 from __future__ import annotations
 
-import argparse
-from copy import deepcopy
 from types import SimpleNamespace
 
 import jax.numpy as jnp
@@ -32,133 +24,23 @@ from pydgens.ir.timetypes import TimeGrid
 from pydgens.solvers.lqsolver import solve_lqgame_feedback
 
 
-EXAMPLE_SCENARIOS = {
-    "distance_hill_frame": {
-        "description": "Distance-only LQ LBG game with approximate Hill-frame conditions.",
-        "cost_model": "distance",
-        "init_aux_state": [
-            0.0, -2000.0, 0.0, 0.0,
-            0.0, 0.0, 0.0, 0.0,
-            0.0, -1000.0, 0.0, 0.0,
-        ],
-        "nt": 100,
-        "dt": 1.0,
-        "px_target": 0.0,
-        "py_target": 0.0,
-        "w_b_bl_dist": 1.0,
-        "w_b_gb_dist": 1.0,
-        "w_b_lt_dist": 0.1,
-        "w_b_acc": 100.0,
-        "w_l_bl_dist": 1.0,
-        "w_l_gb_dist": 1.0,
-        "w_l_lt_dist": 0.1,
-        "w_l_acc": 100.0,
-        "w_g_bl_dist": 1.0,
-        "w_g_gb_dist": 1.0,
-        "w_g_lt_dist": 0.1,
-        "w_g_acc": 100.0,
-    },
-    "alignment_basic": {
-        "description": "Alignment-and-distance LQ LBG game used for function testing.",
-        "cost_model": "alignment",
-        "init_aux_state": [
-            -10.0, 0.0, 1.0, 0.0,
-            10.0, 0.0, -1.0, 0.0,
-            0.0, 10.0, 0.0, -1.0,
-        ],
-        "nt": 10,
-        "dt": 1.0,
-        "px_target": 0.0,
-        "py_target": 0.0,
-        "w_b_bl_align": 1.0,
-        "w_b_bl_dist": 1.0,
-        "w_b_gb_align": 1.0,
-        "w_b_gb_dist": 1.0,
-        "w_b_lt_dist": 1.0,
-        "w_b_acc": 1.0,
-        "w_l_bl_align": 1.0,
-        "w_l_bl_dist": 1.0,
-        "w_l_gb_align": 1.0,
-        "w_l_gb_dist": 1.0,
-        "w_l_lt_dist": 1.0,
-        "w_l_acc": 1.0,
-        "w_g_bl_align": 1.0,
-        "w_g_bl_dist": 1.0,
-        "w_g_gb_align": 1.0,
-        "w_g_gb_dist": 1.0,
-        "w_g_lt_dist": 1.0,
-        "w_g_acc": 1.0,
-    },
-    "alignment_cruise": {
-        "description": "Alignment-and-distance LQ LBG game with larger aircraft-like scales.",
-        "cost_model": "alignment",
-        "init_aux_state": [
-            1e4, 0.0, 2.5e2, 0.0,
-            6e4, 0.0, -2.5e2, 0.0,
-            6e4, 1e3, -2.5e2, 0.0,
-        ],
-        "nt": 20,
-        "dt": 5.0,
-        "px_target": 0.0,
-        "py_target": 0.0,
-        "w_b_bl_align": 1.0e0,
-        "w_b_bl_dist": 1.0e-2,
-        "w_b_gb_align": 1.0e-2,
-        "w_b_gb_dist": 1.0e-2,
-        "w_b_lt_dist": 1.0e-2,
-        "w_b_acc": 1.0e6,
-        "w_l_bl_align": 1.0e0,
-        "w_l_bl_dist": 1.0e-2,
-        "w_l_gb_align": 1.0e-2,
-        "w_l_gb_dist": 1.0e-2,
-        "w_l_lt_dist": 1.0e0,
-        "w_l_acc": 1.0e6,
-        "w_g_bl_align": 1.0e-2,
-        "w_g_bl_dist": 1.0e-2,
-        "w_g_gb_align": 1.0e0,
-        "w_g_gb_dist": 1.0e-2,
-        "w_g_lt_dist": 1.0e-2,
-        "w_g_acc": 1.0e6,
-    },
-}
+DEFAULT_INITIAL_STATE = jnp.array([
+    -10.0, 0.0, 1.0, 0.0,
+    10.0, 0.0, -1.0, 0.0,
+    0.0, 10.0, 0.0, -1.0,
+])
 
 
-SCENARIO_ALIASES = {
-    "C1_001": "distance_hill_frame",
-    "C2_001": "alignment_basic",
-    "C2_002": "alignment_cruise",
-}
-
-
-class LadyBanditGuardDistanceLQ:
+class LadyBanditGuardLQ:
     '''
-    3-player target guarding game (i.e. Lady-Bandit-Guard) where each system is a simple 
-    linear-discrete double integrator and costs are quadratic proximity and control efforts
-
-    Structure: this is a pythonic (object-oriented) wrapper of a JAX-compatible (functional)
-    LinearQuadraticGameType1 object. The purpose of this structure is meant to serve as a flexible
-    wrapper that packages parameters specific to the Aerial LBG1 game alongside a rigidly-defined,
-    JAX-comptabile game object used within an ilq game solver. This structure separates the 
-    problem-specific parameters out of the rigidly-defined NonlinearGameType1 object to avoid
-    the need to define intrecate, inflexible param datastructures into the dataclass objects
-    used in the ilq solvers. In a more pythonic paradigm, this would simply be accomplished
-    by extedning base classes of game types, however, this is not feasible/practical in the 
-    functional paradigm in JAX. 
-
-    This distance-only class is kept as a simpler variant of the example. The
-    primary ``LadyBanditGuardLQ`` class below adds the velocity-alignment proxy
-    costs used by the default runnable example.
-
-    Note that this was originally written as an example of a feedback linearizable nonlinear
-    system, thus the reference to an "auxiliary" state and control space where the aux
-    dynamics/costs are linear-quadratic and the implied non-aux are nonlinear.
-    See ``LadyBanditGuardLQ`` for the alignment-and-distance variant.
+    3-player target guarding game where each player has 2D double-integrator
+    dynamics and quadratic costs.
 
     Nomenclature comes from paper: 
     > Rusnak, Ilan. "The lady, the bandits and the body guards–a two team dynamic game." 
     > IFAC Proceedings Volumes 38, no. 1 (2005): 441-446.
 
-    The game dynamics are discrete-time and linear under the auxiliary state and control:
+    The game dynamics are discrete-time and linear:
         xi_{t+1} = A_game @ xi_t + B_game @ mu_t
 
     where:
@@ -182,10 +64,10 @@ class LadyBanditGuardDistanceLQ:
         which is a concatenation of Bandit, Lady, and Guard (each size (2,)) controls in that order
         - mu_t[0] = ax_B : x-acceleration of bandit at time t [m/s/s]
         - mu_t[1] = ay_B : y-acceleration of bandit at time t [m/s/s]
-        - mu_t[2] = ax_B : x-acceleration of lady at time t [m/s/s]
-        - mu_t[3] = ay_B : y-acceleration of lady at time t [m/s/s]
-        - mu_t[4] = ax_B : x-acceleration of guard at time t [m/s/s]
-        - mu_t[5] = ay_B : y-acceleration of guard at time t [m/s/s]
+        - mu_t[2] = ax_L : x-acceleration of lady at time t [m/s/s]
+        - mu_t[3] = ay_L : y-acceleration of lady at time t [m/s/s]
+        - mu_t[4] = ax_G : x-acceleration of guard at time t [m/s/s]
+        - mu_t[5] = ay_G : y-acceleration of guard at time t [m/s/s]
     '''
 
     # Hard-coded, static parameters of game
@@ -227,96 +109,7 @@ class LadyBanditGuardDistanceLQ:
     PARAMS.GAME_AUX_CTRL.I_GUARD_AX = 4
     PARAMS.GAME_AUX_CTRL.I_GUARD_AY = 5
 
-    # default time components
-    DEFAULT_N_TIMENODES = 20
-    DEFAULT_TIMESTEP_SIZE = 1.0
-
-    # default bandit cost weights
-    DEFAULT_B_BL_DIST_WEIGHT = 1.0
-    DEFAULT_B_GB_DIST_WEIGHT = 1.0
-    DEFAULT_B_LT_DIST_WEIGHT = 1.0
-    DEFAULT_B_ACC_WEIGHT = 1.0
-
-    # default lady cost weights
-    DEFAULT_L_BL_DIST_WEIGHT = 1.0
-    DEFAULT_L_GB_DIST_WEIGHT = 1.0
-    DEFAULT_L_LT_DIST_WEIGHT = 1.0
-    DEFAULT_L_ACC_WEIGHT = 1.0
-    DEFAULT_TARGET_PX = 0.0
-    DEFAULT_TARGET_PY = 0.0
-
-    # default guard cost weights
-    DEFAULT_G_BL_DIST_WEIGHT = 1.0
-    DEFAULT_G_GB_DIST_WEIGHT = 1.0
-    DEFAULT_G_LT_DIST_WEIGHT = 1.0
-    DEFAULT_G_ACC_WEIGHT = 1.0
-
-    def __init__(self, 
-        nt: int=DEFAULT_N_TIMENODES,
-        dt: float=DEFAULT_TIMESTEP_SIZE,
-        px_target: float=DEFAULT_TARGET_PX,
-        py_target: float=DEFAULT_TARGET_PY,
-        w_b_bl_dist: float=DEFAULT_B_BL_DIST_WEIGHT,
-        w_b_gb_dist: float=DEFAULT_B_GB_DIST_WEIGHT,
-        w_b_lt_dist: float=DEFAULT_B_LT_DIST_WEIGHT,
-        w_b_acc: float=DEFAULT_B_ACC_WEIGHT,
-        w_l_bl_dist: float=DEFAULT_L_BL_DIST_WEIGHT,
-        w_l_gb_dist: float=DEFAULT_L_GB_DIST_WEIGHT,
-        w_l_lt_dist: float=DEFAULT_L_LT_DIST_WEIGHT,
-        w_l_acc: float=DEFAULT_L_ACC_WEIGHT,
-        w_g_bl_dist: float=DEFAULT_G_BL_DIST_WEIGHT,
-        w_g_gb_dist: float=DEFAULT_G_GB_DIST_WEIGHT,
-        w_g_lt_dist: float=DEFAULT_G_LT_DIST_WEIGHT,
-        w_g_acc: float=DEFAULT_G_ACC_WEIGHT,
-        cfg_desc: str=None
-        ):
-        """
-        # Args:
-        - tg (TimeGrid): time characteristics (nt, dt, t0)
-        - px_target (float): x-position of lady's target [m]
-        - py_target (float): y-position of lady's target [m]
-        - w_b_bl_dist (float): bandit's cost weight for minimizing bandit distance to lady
-        - w_b_gb_dist (float): bandit's cost weight for maximizing guard distance to bandit
-        - w_b_lt_dist (float): bandit's cost weight for maximizing lady distance to target
-        - w_b_acc (float): bandit's cost weight on control effort of acceleration
-        - w_l_bl_dist (float): lady's cost weight for maximizing bandit distance to lady
-        - w_l_gb_dist (float): lady's cost weight for minimizing guard distance to bandit
-        - w_l_lt_dist (float): lady's cost weight for minimizing lady distance to target
-        - w_l_acc (float): lady's cost weight on control effort of acceleration
-        - w_g_bl_dist (float): guard's cost weight for maximizing bandit distance to lady
-        - w_g_gb_dist (float): guard's cost weight for minimizing guard distance to bandit
-        - w_g_lt_dist (float): guard's cost weight for minimizing lady distance to target
-        - w_g_acc (float): guard's cost weight on control effort of acceleration
-        - cfg_desc (str): a description of the game parameter configuration (optional)
-
-
-        Auxiliary Dynamics: xi[t+1] = A[t]xi[t] + B[t]mu[t]
-        Cost: J[t,i] = 0.5 * xi[t].T @ Q[t,i] @ xi[t] + q[t,i].T @ xi[t] + 
-                       0.5 * mu[t].T @ R[t,i] @ mu[t] + r[t,i].T @ mu[t]
-        """
-
-
-        self.package_cfg_vars(
-            cfg_desc = cfg_desc,
-            px_target = px_target,
-            py_target = py_target,
-            w_b_bl_dist = w_b_bl_dist,
-            w_b_gb_dist = w_b_gb_dist,
-            w_b_lt_dist = w_b_lt_dist,
-            w_b_acc = w_b_acc,
-            w_l_bl_dist = w_l_bl_dist,
-            w_l_gb_dist = w_l_gb_dist,
-            w_l_lt_dist = w_l_lt_dist,
-            w_l_acc = w_l_acc,
-            w_g_bl_dist = w_g_bl_dist,
-            w_g_gb_dist = w_g_gb_dist,
-            w_g_lt_dist = w_g_lt_dist,
-            w_g_acc = w_g_acc,
-        )
-        self.compose_lq_game(nt, dt)
-
     def package_cfg_vars(self, 
-        cfg_desc,
         px_target,
         py_target,
         w_b_bl_dist,
@@ -348,7 +141,6 @@ class LadyBanditGuardDistanceLQ:
 
         # package instance attributes for ease of use
         self.cfg = SimpleNamespace()
-        self.cfg.cfg_desc = cfg_desc
         self.cfg.px_target = px_target
         self.cfg.py_target = py_target
 
@@ -377,7 +169,7 @@ class LadyBanditGuardDistanceLQ:
         nx = self.PARAMS.GAME_AUX_STATE.NX
         nu = self.PARAMS.GAME_AUX_CTRL.NU
 
-        # Instantiate linear-quadrate game matrices
+        # Instantiate linear-quadratic game matrices
         A = jnp.zeros((tg.nt-1, nx, nx))
         B = jnp.zeros((tg.nt-1, nx, nu))
         Q = jnp.zeros((tg.nt-1, N, nx, nx))
@@ -393,7 +185,7 @@ class LadyBanditGuardDistanceLQ:
         # Compile dynamics and cost matrices at each time node
         for tidx in range(tg.nt-1):
 
-            # encode feedback linear (auxiliary) game dynamics
+            # encode linear game dynamics
             At, Bt = self.fblin_dynamics(tg.dt, self.PARAMS)
             A = A.at[tidx].set(At)
             B = B.at[tidx].set(Bt)
@@ -401,16 +193,13 @@ class LadyBanditGuardDistanceLQ:
             # encode bandit quadratic cost matrices
             Q, q, R, r = self.compose_bandit_costs(Q, q, R, r, tidx, self.PARAMS, self.cfg)
 
-            # # encode lady quadratic cost matrices
-            # self.compose_lady_costs(tidx)
+            # encode lady quadratic cost matrices
             Q, q, R, r = self.compose_lady_costs(Q, q, R, r, tidx, self.PARAMS, self.cfg)
 
-            # # encode guard quadratic cost matrices
-            # self.compose_guard_costs(tidx)
+            # encode guard quadratic cost matrices
             Q, q, R, r = self.compose_guard_costs(Q, q, R, r, tidx, self.PARAMS, self.cfg)
 
         # Instantiate control system
-        # not set as it's own instance variable because it will be encapulated in game
         cs = LinearDiscreteSystemType1(
             tg = tg,
             nx = nx,
@@ -434,7 +223,7 @@ class LadyBanditGuardDistanceLQ:
     @staticmethod
     def fblin_dynamics(delta: float, params: SimpleNamespace):
         """
-        Construct the discrete-time system feedback linearized (auxiliary) dynamics matrices for the full 3-player game.
+        Construct the discrete-time dynamics matrices for the full 3-player game.
 
         Each player's dynamics are governed by a double integrator in 2D:
             position_next = position + delta * velocity + 0.5 * delta^2 * acceleration
@@ -451,7 +240,7 @@ class LadyBanditGuardDistanceLQ:
             B_game (jax.numpy.ndarray): (12x6) Block-diagonal control input matrix.
         """
 
-        # unpack dimensions of auxiliary state and control space for bookkeeoing
+        # unpack dimensions of state and control space for bookkeeping
         nx_b = params.GAME_AUX_STATE.NX_BANDIT
         nx_l = params.GAME_AUX_STATE.NX_LADY
         nx_g = params.GAME_AUX_STATE.NX_GUARD
@@ -487,108 +276,6 @@ class LadyBanditGuardDistanceLQ:
 
         return A_game, B_game
     
-    @staticmethod
-    def compose_bandit_costs(Q, q, R, r, tidx, params, cfg):
-        """
-        Sum the quadratic cost matrices for Bandit
-
-        # Args:
-        - t (int): discrete timestep to be encoded
-        """
-
-        idx_b = params.BANDIT_PLAYER_IDX
-
-        # Set: minimize distance between bandit and lady
-        Qc, qc = LadyBanditGuardDistanceLQ.cost_bandit_lady_distance(cfg.w_b_bl_dist, params)
-        Q = Q.at[tidx,idx_b].set(Qc)
-        q = q.at[tidx,idx_b].set(qc)
-
-        # Add: maximize distance between guard and bandit
-        Qc, qc = LadyBanditGuardDistanceLQ.cost_guard_bandit_distance(cfg.w_b_gb_dist, params)
-        Q = Q.at[tidx,idx_b].add(Qc)
-        q = q.at[tidx,idx_b].add(qc)
-
-        # Add: maximize distance between lady and target
-        Qc, qc = LadyBanditGuardDistanceLQ.cost_lady_target_distance(cfg.w_b_lt_dist, cfg.px_target, cfg.py_target, params)
-        Q = Q.at[tidx,idx_b].add(-Qc)
-        q = q.at[tidx,idx_b].add(-qc)
-
-        # Set: minimize control effort of accelerations along both axes equally
-        i_ax_b = params.GAME_AUX_CTRL.I_BANDIT_AX
-        i_ay_b = params.GAME_AUX_CTRL.I_BANDIT_AY
-        R = R.at[tidx, idx_b, i_ax_b, i_ax_b].set(cfg.w_b_acc)
-        R = R.at[tidx, idx_b, i_ay_b, i_ay_b].set(cfg.w_b_acc)
-
-        return Q, q, R, r
-
-    @staticmethod
-    def compose_lady_costs(Q, q, R, r, tidx, params, cfg):
-        """
-        Sum the quadratic cost matrices for Lady
-
-        # Args:
-        - t (int): discrete timestep to be encoded
-        """
-
-        idx_l = params.LADY_PLAYER_IDX
-
-        # Set: maximize distance between bandit and lady
-        Qc, qc = LadyBanditGuardDistanceLQ.cost_bandit_lady_distance(cfg.w_l_bl_dist, params)
-        Q = Q.at[tidx,idx_l].set(-Qc)
-        q = q.at[tidx,idx_l].set(-qc)
-
-        # Add: minimize distance between guard and bandit
-        Qc, qc = LadyBanditGuardDistanceLQ.cost_guard_bandit_distance(cfg.w_l_gb_dist, params)
-        Q = Q.at[tidx,idx_l].add(-Qc)
-        q = q.at[tidx,idx_l].add(-qc)
-
-        # Add: minimize distance between lady and target
-        Qc, qc = LadyBanditGuardDistanceLQ.cost_lady_target_distance(cfg.w_l_lt_dist, cfg.px_target, cfg.py_target, params)
-        Q = Q.at[tidx,idx_l].add(Qc)
-        q = q.at[tidx,idx_l].add(qc)
-
-        # Set: minimize control effort of accelerations along both axes equally
-        i_ax_l = params.GAME_AUX_CTRL.I_LADY_AX
-        i_ay_l = params.GAME_AUX_CTRL.I_LADY_AY
-        R = R.at[tidx, idx_l, i_ax_l, i_ax_l].set(cfg.w_l_acc)
-        R = R.at[tidx, idx_l, i_ay_l, i_ay_l].set(cfg.w_l_acc)
-
-        return Q, q, R, r
-
-    @staticmethod
-    def compose_guard_costs(Q, q, R, r, tidx, params, cfg):
-        """
-        Sum the quadratic cost matrices for Guard
-
-        # Args:
-        - t (int): discrete timestep to be encoded
-        """
-
-        idx_g = params.GUARD_PLAYER_IDX
-
-        # Set: maximize distance between bandit and lady
-        Qc, qc = LadyBanditGuardDistanceLQ.cost_bandit_lady_distance(cfg.w_g_bl_dist, params)
-        Q = Q.at[tidx,idx_g].set(-Qc)
-        q = q.at[tidx,idx_g].set(-qc)
-
-        # Add: minimize distance between guard and bandit
-        Qc, qc = LadyBanditGuardDistanceLQ.cost_guard_bandit_distance(cfg.w_g_gb_dist, params)
-        Q = Q.at[tidx,idx_g].add(-Qc)
-        q = q.at[tidx,idx_g].add(-qc)
-
-        # Add: minimize distance between lady and target
-        Qc, qc = LadyBanditGuardDistanceLQ.cost_lady_target_distance(cfg.w_g_lt_dist, cfg.px_target, cfg.py_target, params)
-        Q = Q.at[tidx,idx_g].add(Qc)
-        q = q.at[tidx,idx_g].add(qc)
-
-        # Set: minimize control effort of accelerations along both axes equally
-        i_ax_g = params.GAME_AUX_CTRL.I_GUARD_AX
-        i_ay_g = params.GAME_AUX_CTRL.I_GUARD_AY
-        R = R.at[tidx, idx_g, i_ax_g, i_ax_g].set(cfg.w_g_acc)
-        R = R.at[tidx, idx_g, i_ay_g, i_ay_g].set(cfg.w_g_acc)
-
-        return Q, q, R, r
-
     @staticmethod
     def cost_bandit_lady_distance(c_dBL: float, params) -> tuple[jnp.ndarray, jnp.ndarray]:
         """
@@ -689,8 +376,8 @@ class LadyBanditGuardDistanceLQ:
 
         Args:
             c_dLT (float): Weighting parameter for the squared distance cost.
-            (deprecated) px_tar (float): x-position of fixed target [m]
-            (deprecated) py_tar (float): y-position of fixed target [m]
+            px_target (float): x-position of fixed target [m]
+            py_target (float): y-position of fixed target [m]
 
         Returns:
             Q (jax.numpy.ndarray): (12x12) quadratic cost matrix
@@ -716,25 +403,6 @@ class LadyBanditGuardDistanceLQ:
         q = q.at[i_py_l].set(-2 * c_dLT * py_target)
 
         return Q, q
-
-
-class LadyBanditGuardLQ(LadyBanditGuardDistanceLQ):
-    '''
-    3-player target guarding game (i.e. Lady-Bandit-Guard) where each system is a simple 
-    3-DOF aircraft model moving in 2-dimensions which is feedback linearizable to formulate 
-    the game as a linear-quadratic game. 
-    
-    This differs from ``LadyBanditGuardDistanceLQ`` by adding velocity
-    alignment proxy costs. Those proxy costs are deliberately quadratic so the
-    full game remains compatible with the LQ solver.
-
-    The feedback linearizable aircraft dynamics are based on the "4D unicycle" described
-    in Sec V of the paper:
-    > Fridovich-Keil, David, Vicenc Rubies-Royo, and Claire J. Tomlin. 
-    > "An iterative quadratic method for general-sum differential games with 
-    > feedback linearizable dynamics." 2020 IEEE International Conference on 
-    > Robotics and Automation (ICRA). IEEE, 2020.
-    '''
 
     # default time components
     DEFAULT_N_TIMENODES = 20
@@ -789,7 +457,6 @@ class LadyBanditGuardLQ(LadyBanditGuardDistanceLQ):
         w_g_gb_dist: float=DEFAULT_G_GB_DIST_WEIGHT,
         w_g_lt_dist: float=DEFAULT_G_LT_DIST_WEIGHT,
         w_g_acc: float=DEFAULT_G_ACC_WEIGHT,
-        cfg_desc: str=None
         ):
         """
         # Args:
@@ -814,17 +481,13 @@ class LadyBanditGuardLQ(LadyBanditGuardDistanceLQ):
         - w_g_gb_dist (float): guard's cost weight for minimizing guard distance to bandit
         - w_g_lt_dist (float): guard's cost weight for minimizing lady distance to target
         - w_g_acc (float): guard's cost weight on control effort of acceleration
-        - cfg_desc (str): a description of the game parameter configuration (optional)
-
-
         Auxiliary Dynamics: xi[t+1] = A[t]xi[t] + B[t]mu[t]
         Cost: J[t,i] = 0.5 * xi[t].T @ Q[t,i] @ xi[t] + q[t,i].T @ xi[t] + 
                        0.5 * mu[t].T @ R[t,i] @ mu[t] + r[t,i].T @ mu[t]
         """
 
-        # utilize parent config compose
+        # Store the scalar weights used while assembling Q, q, R, and r.
         self.package_cfg_vars(
-            cfg_desc = cfg_desc,
             px_target = px_target,
             py_target = py_target,
             w_b_bl_dist = w_b_bl_dist,
@@ -841,7 +504,7 @@ class LadyBanditGuardLQ(LadyBanditGuardDistanceLQ):
             w_g_acc = w_g_acc,
         )
 
-        # add child-specific variables to config
+        # Store the alignment-proxy weights alongside the distance weights.
         assert w_b_bl_align > 0
         assert w_b_gb_align > 0
         assert w_l_bl_align > 0
@@ -855,7 +518,7 @@ class LadyBanditGuardLQ(LadyBanditGuardDistanceLQ):
         self.cfg.w_g_bl_align = w_g_bl_align
         self.cfg.w_g_gb_align = w_g_gb_align
 
-        # recompose linear-quadratic game with additional configs
+        # Compose the linear-quadratic game matrices.
         self.compose_lq_game(nt, dt)
     
     @staticmethod
@@ -1043,7 +706,7 @@ class LadyBanditGuardLQ(LadyBanditGuardDistanceLQ):
         Construct the quadratic cost matrices Q and q for the Guard-Bandit alignment proxy cost.
 
         The cost is from the perspective of the Bandit's objective to maximize the misalignment
-        (i.e. minimize the alignment) of the Guard's velocity vector v_G with the the Bandit's
+        (i.e. minimize the alignment) of the Guard's velocity vector v_G with the Bandit's
         position vector relative to the guard: p_{B/G} = p_B - p_G. This is accomplished
         by minimizing dot(v_G, p_{B/G})
 
@@ -1086,92 +749,10 @@ class LadyBanditGuardLQ(LadyBanditGuardDistanceLQ):
 
         return Q, q
 
-    @staticmethod
-    def cost_lady_target_distance(c_dLT: float, px_target, py_target, params) -> tuple[jnp.ndarray, jnp.ndarray]:
-        """
-        Constructs the quadratic cost matrix Q and vector q for the
-        Lady-Target distance cost. The cost is from the perspective of the
-        Lady that is trying to minimize distance to fixed target
 
-        The cost is in standard form
-            J = 1/2 xi.T @ Q @ xi + q.T @ xi
-
-        Args:
-            c_dLT (float): Weighting parameter for the squared distance cost.
-            (deprecated) px_tar (float): x-position of fixed target [m]
-            (deprecated) py_tar (float): y-position of fixed target [m]
-
-        Returns:
-            Q (jax.numpy.ndarray): (12x12) quadratic cost matrix
-            q (jax.numpy.ndarray): (12,) linear cost vector
-        """
-
-        assert c_dLT > 0, f"weight c_dLT must be positive, got {c_dLT}"
-
-        nx = params.GAME_AUX_STATE.NX
-        Q = jnp.zeros((nx, nx))
-
-        # unpack aux state indices for ease of bookkeeping
-        i_px_l = params.GAME_AUX_STATE.I_LADY_PX
-        i_py_l = params.GAME_AUX_STATE.I_LADY_PY
-
-        # Diagonal terms
-        Q = Q.at[i_px_l, i_px_l].set(2 * c_dLT)
-        Q = Q.at[i_py_l, i_py_l].set(2 * c_dLT)
-
-        # Linear term
-        q = jnp.zeros(nx)
-        q = q.at[i_px_l].set(-2 * c_dLT * px_target)
-        q = q.at[i_py_l].set(-2 * c_dLT * py_target)
-
-        return Q, q
-
-
-def scenario_config(name: str = "alignment_basic") -> dict:
+def solve_example():
     """
-    Return a copy of one built-in example scenario.
-
-    The old development version of this example loaded JSON configuration
-    files. For a package example, keeping a few named scenarios in code makes
-    the modeling path easier to read and avoids presenting file-based
-    configuration as a PYDGENS convention.
-    """
-    key = SCENARIO_ALIASES.get(name, name)
-    if key not in EXAMPLE_SCENARIOS:
-        names = ", ".join(sorted(EXAMPLE_SCENARIOS))
-        aliases = ", ".join(sorted(SCENARIO_ALIASES))
-        raise ValueError(
-            f"Unknown scenario {name!r}. Available scenarios: {names}. "
-            f"Legacy aliases: {aliases}."
-        )
-    return deepcopy(EXAMPLE_SCENARIOS[key])
-
-
-def build_game_from_config(config: dict):
-    """
-    Build a Lady-Bandit-Guard game and initial state from a scenario config.
-    """
-    cfg = dict(config)
-    x0 = jnp.asarray(cfg.pop("init_aux_state"))
-    cost_model = cfg.pop("cost_model", "alignment").lower()
-    cfg.pop("description", None)
-
-    if cost_model in {"alignment", "full", "c2"}:
-        game_builder = LadyBanditGuardLQ
-    elif cost_model in {"distance", "distance_only", "c1"}:
-        game_builder = LadyBanditGuardDistanceLQ
-    else:
-        raise ValueError(
-            "cost_model must be one of 'alignment' or 'distance', "
-            f"got {cost_model!r}"
-        )
-
-    return game_builder(**cfg), x0
-
-
-def solve_example(scenario: str = "alignment_basic"):
-    """
-    Build, solve, and propagate a built-in Lady-Bandit-Guard LQ scenario.
+    Build, solve, and propagate the Lady-Bandit-Guard LQ example.
 
     Returns
     -------
@@ -1181,35 +762,19 @@ def solve_example(scenario: str = "alignment_basic"):
         solver, and ``trajectory`` is the propagated auxiliary state/control
         trajectory.
     """
-    config = scenario_config(scenario)
-    lbg, x0 = build_game_from_config(config)
-
+    lbg = LadyBanditGuardLQ()
     strategy = solve_lqgame_feedback(lbg.game)
     trajectory = propagate_system_trajectory(
         lbg.game.cs,
-        x0=x0,
+        x0=DEFAULT_INITIAL_STATE,
         strategy=strategy,
     )
 
     return lbg, strategy, trajectory
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Solve a built-in Lady-Bandit-Guard LQ IR scenario.",
-    )
-    parser.add_argument(
-        "--scenario",
-        default="alignment_basic",
-        choices=sorted((*EXAMPLE_SCENARIOS, *SCENARIO_ALIASES)),
-        help="Built-in scenario to solve.",
-    )
-    return parser.parse_args()
-
-
 def main() -> None:
-    args = parse_args()
-    lbg, strategy, trajectory = solve_example(args.scenario)
+    lbg, strategy, trajectory = solve_example()
 
     xs = trajectory.xs
     us = trajectory.us
@@ -1228,7 +793,6 @@ def main() -> None:
     ])
 
     print("Lady-Bandit-Guard LQ IR example solved.")
-    print(f"Scenario: {args.scenario}")
     print(f"Strategy shape: P={strategy.P.shape}, alpha={strategy.alpha.shape}")
     print(f"Trajectory shape: xs={xs.shape}, us={us.shape}")
     print("Initial positions:")

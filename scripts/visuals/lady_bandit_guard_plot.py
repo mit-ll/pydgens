@@ -158,11 +158,6 @@ def parse_args():
         description="Generate a Lady-Bandit-Guard example plot.",
     )
     parser.add_argument(
-        "--scenario",
-        default="alignment_basic",
-        help="Built-in scenario name from ir_lady_bandit_guard.py.",
-    )
-    parser.add_argument(
         "--output",
         type=Path,
         default=Path("docs/assets/lady_bandit_guard.png"),
@@ -178,7 +173,7 @@ def parse_args():
 
 def main() -> None:
     args = parse_args()
-    lbg, _, trajectory = solve_example(args.scenario)
+    lbg, _, trajectory = solve_example()
     fig = make_figure(lbg, trajectory)
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
