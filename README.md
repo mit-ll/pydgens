@@ -44,6 +44,12 @@ Run the same unicycle game built directly with the lower-level IR interfaces:
 python src/pydgens/examples/ir_unicycle.py
 ```
 
+Run a richer linear-quadratic Lady-Bandit-Guard game built directly with the lower-level IR interfaces:
+
+```bash
+python src/pydgens/examples/ir_lady_bandit_guard.py
+```
+
 Run a constrained two-player integrator game solved with the augmented-Lagrangian solver:
 
 ```bash

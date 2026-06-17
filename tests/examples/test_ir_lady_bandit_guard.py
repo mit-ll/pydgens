@@ -9,7 +9,7 @@ import numpy as np
     
 from pathlib import Path
 
-from pydgens.examples.doubleint import DoubleInt_LQLBG_C2
+from pydgens.examples.ir_lady_bandit_guard import LadyBanditGuardLQ
 from pydgens.ir.gametypes import LinearQuadraticGameType1
 from pydgens.solvers.lqsolver import solve_lqgame_feedback
 
@@ -18,12 +18,12 @@ def eval_quadratic_cost(Q, q, xi):
 
 @pytest.fixture
 def lbg2():
-    return DoubleInt_LQLBG_C2()
+    return LadyBanditGuardLQ()
 
 @pytest.fixture
 def lbg2_Qf():
-    # Terminal state cost version of BoublInt_LQLBG_C2
-    lbg2 = DoubleInt_LQLBG_C2()
+    # Terminal state cost version of the Lady-Bandit-Guard LQ example.
+    lbg2 = LadyBanditGuardLQ()
 
 
 
@@ -499,14 +499,14 @@ def test_solve_lq_strat_regress_2_Qf(lbg2_Qf):
 
 @pytest.mark.regression
 @pytest.mark.slow
-@pytest.mark.benchmark(group="doubleintlq-001")
-def test_solve_doubleint_lqlbg_warm_perf_1(benchmark):
+@pytest.mark.benchmark(group="ir-lady-bandit-guard-001")
+def test_solve_ir_lady_bandit_guard_warm_perf_1(benchmark):
     """ Benchmark performance of warm-started linear-quadratic solver on 
     2-player integrator system defined in example 37 in 
     https://clearoboticslab.github.io/documents/smooth_game_theory.pdf
     """
 
-    lqg = DoubleInt_LQLBG_C2()
+    lqg = LadyBanditGuardLQ()
 
     def run():
         st = solve_lqgame_feedback(lqg.game)

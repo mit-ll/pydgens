@@ -12,16 +12,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `test_tug_o_war.py` smoketests of basic LQ example
 - `test_unicycle.py` smoketest of basic ILQ example
 - `test_constrained_integrators.py` smoketest of basic AL example
+- `scripts/visuals/lady_bandit_guard_plot.py` for generating optional documentation plots outside the package
 
 ### Changed
 
 - `examples/constrained_integrators.py` removing specific args for solver to make example simpler, more friendly for a first-time user
 - renamed `examples/unicycle1.py` to `examples/ir_unicycle.py` for clarity of its purpose
 - `examples/ir_unicycle.py` now mirrors `examples/unicycle.py` as an advanced IR companion example
+- renamed the legacy double-integrator LBG example to `examples/ir_lady_bandit_guard.py` and folded the non-plotting runner path into the example
 
 ### Removed 
 
 - `examples/run_unicycle1.py` to clarify/simplify examples
+- `examples/run_doubleint_lqlbg.py` and `examples/doubleint_lqlbg.json` to keep plotting/configuration helpers out of the package examples
 
 ## [v0.6.1] - 2026.06.05
 

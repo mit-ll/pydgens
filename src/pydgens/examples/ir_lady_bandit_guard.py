@@ -1,14 +1,136 @@
 # Copyright 2026 MIT Lincoln Laboratory
 # SPDX-License-Identifier: MIT
 
-import jax.numpy as jnp
+"""
+Advanced example: a linear-quadratic Lady-Bandit-Guard game in IR form.
+
+This example is intentionally lower-level than the beginner examples. It
+constructs the ``LinearQuadraticGameType1`` matrices directly, which makes it
+useful for users who want to understand or customize the intermediate
+representation (IR) consumed by the LQ solver.
+
+The public path through this module uses ``LadyBanditGuardLQ``. A simpler
+``LadyBanditGuardDistanceLQ`` variant is kept because it is useful for tests
+and experimentation, but the alignment-and-distance version is the example
+worth reading first.
+"""
+
+from __future__ import annotations
+
+import argparse
+from copy import deepcopy
 from types import SimpleNamespace
 
-from pydgens.ir.timetypes import TimeGrid
-from pydgens.ir.systemtypes import LinearDiscreteSystemType1
-from pydgens.ir.gametypes import LinearQuadraticGameType1
+import jax.numpy as jnp
 
-class DoubleInt_LQLBG_C1:
+from pydgens.ir.gametypes import LinearQuadraticGameType1
+from pydgens.ir.systemtypes import (
+    LinearDiscreteSystemType1,
+    propagate_system_trajectory,
+)
+from pydgens.ir.timetypes import TimeGrid
+from pydgens.solvers.lqsolver import solve_lqgame_feedback
+
+
+EXAMPLE_SCENARIOS = {
+    "distance_hill_frame": {
+        "description": "Distance-only LQ LBG game with approximate Hill-frame conditions.",
+        "cost_model": "distance",
+        "init_aux_state": [
+            0.0, -2000.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0,
+            0.0, -1000.0, 0.0, 0.0,
+        ],
+        "nt": 100,
+        "dt": 1.0,
+        "px_target": 0.0,
+        "py_target": 0.0,
+        "w_b_bl_dist": 1.0,
+        "w_b_gb_dist": 1.0,
+        "w_b_lt_dist": 0.1,
+        "w_b_acc": 100.0,
+        "w_l_bl_dist": 1.0,
+        "w_l_gb_dist": 1.0,
+        "w_l_lt_dist": 0.1,
+        "w_l_acc": 100.0,
+        "w_g_bl_dist": 1.0,
+        "w_g_gb_dist": 1.0,
+        "w_g_lt_dist": 0.1,
+        "w_g_acc": 100.0,
+    },
+    "alignment_basic": {
+        "description": "Alignment-and-distance LQ LBG game used for function testing.",
+        "cost_model": "alignment",
+        "init_aux_state": [
+            -10.0, 0.0, 1.0, 0.0,
+            10.0, 0.0, -1.0, 0.0,
+            0.0, 10.0, 0.0, -1.0,
+        ],
+        "nt": 10,
+        "dt": 1.0,
+        "px_target": 0.0,
+        "py_target": 0.0,
+        "w_b_bl_align": 1.0,
+        "w_b_bl_dist": 1.0,
+        "w_b_gb_align": 1.0,
+        "w_b_gb_dist": 1.0,
+        "w_b_lt_dist": 1.0,
+        "w_b_acc": 1.0,
+        "w_l_bl_align": 1.0,
+        "w_l_bl_dist": 1.0,
+        "w_l_gb_align": 1.0,
+        "w_l_gb_dist": 1.0,
+        "w_l_lt_dist": 1.0,
+        "w_l_acc": 1.0,
+        "w_g_bl_align": 1.0,
+        "w_g_bl_dist": 1.0,
+        "w_g_gb_align": 1.0,
+        "w_g_gb_dist": 1.0,
+        "w_g_lt_dist": 1.0,
+        "w_g_acc": 1.0,
+    },
+    "alignment_cruise": {
+        "description": "Alignment-and-distance LQ LBG game with larger aircraft-like scales.",
+        "cost_model": "alignment",
+        "init_aux_state": [
+            1e4, 0.0, 2.5e2, 0.0,
+            6e4, 0.0, -2.5e2, 0.0,
+            6e4, 1e3, -2.5e2, 0.0,
+        ],
+        "nt": 20,
+        "dt": 5.0,
+        "px_target": 0.0,
+        "py_target": 0.0,
+        "w_b_bl_align": 1.0e0,
+        "w_b_bl_dist": 1.0e-2,
+        "w_b_gb_align": 1.0e-2,
+        "w_b_gb_dist": 1.0e-2,
+        "w_b_lt_dist": 1.0e-2,
+        "w_b_acc": 1.0e6,
+        "w_l_bl_align": 1.0e0,
+        "w_l_bl_dist": 1.0e-2,
+        "w_l_gb_align": 1.0e-2,
+        "w_l_gb_dist": 1.0e-2,
+        "w_l_lt_dist": 1.0e0,
+        "w_l_acc": 1.0e6,
+        "w_g_bl_align": 1.0e-2,
+        "w_g_bl_dist": 1.0e-2,
+        "w_g_gb_align": 1.0e0,
+        "w_g_gb_dist": 1.0e-2,
+        "w_g_lt_dist": 1.0e-2,
+        "w_g_acc": 1.0e6,
+    },
+}
+
+
+SCENARIO_ALIASES = {
+    "C1_001": "distance_hill_frame",
+    "C2_001": "alignment_basic",
+    "C2_002": "alignment_cruise",
+}
+
+
+class LadyBanditGuardDistanceLQ:
     '''
     3-player target guarding game (i.e. Lady-Bandit-Guard) where each system is a simple 
     linear-discrete double integrator and costs are quadratic proximity and control efforts
@@ -23,14 +145,14 @@ class DoubleInt_LQLBG_C1:
     by extedning base classes of game types, however, this is not feasible/practical in the 
     functional paradigm in JAX. 
 
-    Note that C1 is just a label attached to the particular collection of cost functions
-    defined in this module. A different set of cost functions could be defined but should
-    then receive a different cost functions identification label
+    This distance-only class is kept as a simpler variant of the example. The
+    primary ``LadyBanditGuardLQ`` class below adds the velocity-alignment proxy
+    costs used by the default runnable example.
 
     Note that this was originally written as an example of a feedback linearizable nonlinear
     system, thus the reference to an "auxiliary" state and control space where the aux
-    dynamics/costs are linear-quadratic and the implied non-aux are nonlinear. See the 
-    C2 implementation for more discussion
+    dynamics/costs are linear-quadratic and the implied non-aux are nonlinear.
+    See ``LadyBanditGuardLQ`` for the alignment-and-distance variant.
 
     Nomenclature comes from paper: 
     > Rusnak, Ilan. "The lady, the bandits and the body guards–a two team dynamic game." 
@@ -377,17 +499,17 @@ class DoubleInt_LQLBG_C1:
         idx_b = params.BANDIT_PLAYER_IDX
 
         # Set: minimize distance between bandit and lady
-        Qc, qc = DoubleInt_LQLBG_C1.cost_bandit_lady_distance(cfg.w_b_bl_dist, params)
+        Qc, qc = LadyBanditGuardDistanceLQ.cost_bandit_lady_distance(cfg.w_b_bl_dist, params)
         Q = Q.at[tidx,idx_b].set(Qc)
         q = q.at[tidx,idx_b].set(qc)
 
         # Add: maximize distance between guard and bandit
-        Qc, qc = DoubleInt_LQLBG_C1.cost_guard_bandit_distance(cfg.w_b_gb_dist, params)
+        Qc, qc = LadyBanditGuardDistanceLQ.cost_guard_bandit_distance(cfg.w_b_gb_dist, params)
         Q = Q.at[tidx,idx_b].add(Qc)
         q = q.at[tidx,idx_b].add(qc)
 
         # Add: maximize distance between lady and target
-        Qc, qc = DoubleInt_LQLBG_C1.cost_lady_target_distance(cfg.w_b_lt_dist, cfg.px_target, cfg.py_target, params)
+        Qc, qc = LadyBanditGuardDistanceLQ.cost_lady_target_distance(cfg.w_b_lt_dist, cfg.px_target, cfg.py_target, params)
         Q = Q.at[tidx,idx_b].add(-Qc)
         q = q.at[tidx,idx_b].add(-qc)
 
@@ -411,17 +533,17 @@ class DoubleInt_LQLBG_C1:
         idx_l = params.LADY_PLAYER_IDX
 
         # Set: maximize distance between bandit and lady
-        Qc, qc = DoubleInt_LQLBG_C1.cost_bandit_lady_distance(cfg.w_l_bl_dist, params)
+        Qc, qc = LadyBanditGuardDistanceLQ.cost_bandit_lady_distance(cfg.w_l_bl_dist, params)
         Q = Q.at[tidx,idx_l].set(-Qc)
         q = q.at[tidx,idx_l].set(-qc)
 
         # Add: minimize distance between guard and bandit
-        Qc, qc = DoubleInt_LQLBG_C1.cost_guard_bandit_distance(cfg.w_l_gb_dist, params)
+        Qc, qc = LadyBanditGuardDistanceLQ.cost_guard_bandit_distance(cfg.w_l_gb_dist, params)
         Q = Q.at[tidx,idx_l].add(-Qc)
         q = q.at[tidx,idx_l].add(-qc)
 
         # Add: minimize distance between lady and target
-        Qc, qc = DoubleInt_LQLBG_C1.cost_lady_target_distance(cfg.w_l_lt_dist, cfg.px_target, cfg.py_target, params)
+        Qc, qc = LadyBanditGuardDistanceLQ.cost_lady_target_distance(cfg.w_l_lt_dist, cfg.px_target, cfg.py_target, params)
         Q = Q.at[tidx,idx_l].add(Qc)
         q = q.at[tidx,idx_l].add(qc)
 
@@ -445,17 +567,17 @@ class DoubleInt_LQLBG_C1:
         idx_g = params.GUARD_PLAYER_IDX
 
         # Set: maximize distance between bandit and lady
-        Qc, qc = DoubleInt_LQLBG_C1.cost_bandit_lady_distance(cfg.w_g_bl_dist, params)
+        Qc, qc = LadyBanditGuardDistanceLQ.cost_bandit_lady_distance(cfg.w_g_bl_dist, params)
         Q = Q.at[tidx,idx_g].set(-Qc)
         q = q.at[tidx,idx_g].set(-qc)
 
         # Add: minimize distance between guard and bandit
-        Qc, qc = DoubleInt_LQLBG_C1.cost_guard_bandit_distance(cfg.w_g_gb_dist, params)
+        Qc, qc = LadyBanditGuardDistanceLQ.cost_guard_bandit_distance(cfg.w_g_gb_dist, params)
         Q = Q.at[tidx,idx_g].add(-Qc)
         q = q.at[tidx,idx_g].add(-qc)
 
         # Add: minimize distance between lady and target
-        Qc, qc = DoubleInt_LQLBG_C1.cost_lady_target_distance(cfg.w_g_lt_dist, cfg.px_target, cfg.py_target, params)
+        Qc, qc = LadyBanditGuardDistanceLQ.cost_lady_target_distance(cfg.w_g_lt_dist, cfg.px_target, cfg.py_target, params)
         Q = Q.at[tidx,idx_g].add(Qc)
         q = q.at[tidx,idx_g].add(qc)
 
@@ -595,15 +717,16 @@ class DoubleInt_LQLBG_C1:
 
         return Q, q
 
-class DoubleInt_LQLBG_C2(DoubleInt_LQLBG_C1):
+
+class LadyBanditGuardLQ(LadyBanditGuardDistanceLQ):
     '''
     3-player target guarding game (i.e. Lady-Bandit-Guard) where each system is a simple 
     3-DOF aircraft model moving in 2-dimensions which is feedback linearizable to formulate 
     the game as a linear-quadratic game. 
     
-    This differs from the C1 game in the cost functions
-    which attempt to define a velocity alignment cost (albeit not terribly successfully and
-    a poor proxy must be used to keep costs quadratic)
+    This differs from ``LadyBanditGuardDistanceLQ`` by adding velocity
+    alignment proxy costs. Those proxy costs are deliberately quadratic so the
+    full game remains compatible with the LQ solver.
 
     The feedback linearizable aircraft dynamics are based on the "4D unicycle" described
     in Sec V of the paper:
@@ -747,27 +870,27 @@ class DoubleInt_LQLBG_C2(DoubleInt_LQLBG_C1):
         idx_b = params.BANDIT_PLAYER_IDX
 
         # Set: minimize alignment error between bandit velocity and lady position relative to bandit
-        Qc, qc = DoubleInt_LQLBG_C2.cost_bandit_lady_alignment_proxy(cfg.w_b_bl_align, params)
+        Qc, qc = LadyBanditGuardLQ.cost_bandit_lady_alignment_proxy(cfg.w_b_bl_align, params)
         Q = Q.at[tidx,idx_b].set(Qc)
         q = q.at[tidx,idx_b].set(qc)
 
         # Add: minimize distance between bandit and lady
-        Qc, qc = DoubleInt_LQLBG_C2.cost_bandit_lady_distance(cfg.w_b_bl_dist, params)
+        Qc, qc = LadyBanditGuardLQ.cost_bandit_lady_distance(cfg.w_b_bl_dist, params)
         Q = Q.at[tidx,idx_b].add(Qc)
         q = q.at[tidx,idx_b].add(qc)
 
         # Add: maximize alignment error between guard velocity and bandit position relative to guard
-        Qc, qc = DoubleInt_LQLBG_C2.cost_guard_bandit_alignment_proxy(cfg.w_b_gb_align, params)
+        Qc, qc = LadyBanditGuardLQ.cost_guard_bandit_alignment_proxy(cfg.w_b_gb_align, params)
         Q = Q.at[tidx,idx_b].add(Qc)
         q = q.at[tidx,idx_b].add(qc)
 
         # Add: maximize distance between guard and bandit
-        Qc, qc = DoubleInt_LQLBG_C2.cost_guard_bandit_distance(cfg.w_b_gb_dist, params)
+        Qc, qc = LadyBanditGuardLQ.cost_guard_bandit_distance(cfg.w_b_gb_dist, params)
         Q = Q.at[tidx,idx_b].add(Qc)
         q = q.at[tidx,idx_b].add(qc)
 
         # Add: maximize distance between lady and target
-        Qc, qc = DoubleInt_LQLBG_C2.cost_lady_target_distance(cfg.w_b_lt_dist, cfg.px_target, cfg.py_target, params)
+        Qc, qc = LadyBanditGuardLQ.cost_lady_target_distance(cfg.w_b_lt_dist, cfg.px_target, cfg.py_target, params)
         Q = Q.at[tidx,idx_b].add(-Qc)
         q = q.at[tidx,idx_b].add(-qc)
 
@@ -791,27 +914,27 @@ class DoubleInt_LQLBG_C2(DoubleInt_LQLBG_C1):
         idx_l = params.LADY_PLAYER_IDX
         
         # Set: maximize alignment error between bandit velocity and lady position relative to bandit
-        Qc, qc = DoubleInt_LQLBG_C2.cost_bandit_lady_alignment_proxy(cfg.w_l_bl_align, params)
+        Qc, qc = LadyBanditGuardLQ.cost_bandit_lady_alignment_proxy(cfg.w_l_bl_align, params)
         Q = Q.at[tidx,idx_l].set(-Qc)
         q = q.at[tidx,idx_l].set(-qc)
 
         # Add: maximize distance between bandit and lady
-        Qc, qc = DoubleInt_LQLBG_C2.cost_bandit_lady_distance(cfg.w_l_bl_dist, params)
+        Qc, qc = LadyBanditGuardLQ.cost_bandit_lady_distance(cfg.w_l_bl_dist, params)
         Q = Q.at[tidx,idx_l].add(-Qc)
         q = q.at[tidx,idx_l].add(-qc)
 
         # Add: minimize alignment error between guard velocity and bandit position relative to guard
-        Qc, qc = DoubleInt_LQLBG_C2.cost_guard_bandit_alignment_proxy(cfg.w_l_gb_align, params)
+        Qc, qc = LadyBanditGuardLQ.cost_guard_bandit_alignment_proxy(cfg.w_l_gb_align, params)
         Q = Q.at[tidx,idx_l].add(-Qc)
         q = q.at[tidx,idx_l].add(-qc)
 
         # Add: minimize distance between guard and bandit
-        Qc, qc = DoubleInt_LQLBG_C2.cost_guard_bandit_distance(cfg.w_l_gb_dist, params)
+        Qc, qc = LadyBanditGuardLQ.cost_guard_bandit_distance(cfg.w_l_gb_dist, params)
         Q = Q.at[tidx,idx_l].add(-Qc)
         q = q.at[tidx,idx_l].add(-qc)
 
         # Add: minimize distance between lady and target
-        Qc, qc = DoubleInt_LQLBG_C2.cost_lady_target_distance(cfg.w_l_lt_dist, cfg.px_target, cfg.py_target, params)
+        Qc, qc = LadyBanditGuardLQ.cost_lady_target_distance(cfg.w_l_lt_dist, cfg.px_target, cfg.py_target, params)
         Q = Q.at[tidx,idx_l].add(Qc)
         q = q.at[tidx,idx_l].add(qc)
 
@@ -835,27 +958,27 @@ class DoubleInt_LQLBG_C2(DoubleInt_LQLBG_C1):
         idx_g = params.GUARD_PLAYER_IDX
 
         # Set: maximize alignment error between bandit velocity and lady position relative to bandit
-        Qc, qc = DoubleInt_LQLBG_C2.cost_bandit_lady_alignment_proxy(cfg.w_g_bl_align, params)
+        Qc, qc = LadyBanditGuardLQ.cost_bandit_lady_alignment_proxy(cfg.w_g_bl_align, params)
         Q = Q.at[tidx,idx_g].set(-Qc)
         q = q.at[tidx,idx_g].set(-qc)
 
         # Add: maximize distance between bandit and lady
-        Qc, qc = DoubleInt_LQLBG_C2.cost_bandit_lady_distance(cfg.w_g_bl_dist, params)
+        Qc, qc = LadyBanditGuardLQ.cost_bandit_lady_distance(cfg.w_g_bl_dist, params)
         Q = Q.at[tidx,idx_g].add(-Qc)
         q = q.at[tidx,idx_g].add(-qc)
 
         # Add: minimize alignment error between guard velocity and bandit position relative to guard
-        Qc, qc = DoubleInt_LQLBG_C2.cost_guard_bandit_alignment_proxy(cfg.w_g_gb_align, params)
+        Qc, qc = LadyBanditGuardLQ.cost_guard_bandit_alignment_proxy(cfg.w_g_gb_align, params)
         Q = Q.at[tidx,idx_g].add(-Qc)
         q = q.at[tidx,idx_g].add(-qc)
 
         # Add: minimize distance between guard and bandit
-        Qc, qc = DoubleInt_LQLBG_C2.cost_guard_bandit_distance(cfg.w_g_gb_dist, params)
+        Qc, qc = LadyBanditGuardLQ.cost_guard_bandit_distance(cfg.w_g_gb_dist, params)
         Q = Q.at[tidx,idx_g].add(-Qc)
         q = q.at[tidx,idx_g].add(-qc)
 
         # Add: minimize distance between lady and target
-        Qc, qc = DoubleInt_LQLBG_C2.cost_lady_target_distance(cfg.w_g_lt_dist, cfg.px_target, cfg.py_target, params)
+        Qc, qc = LadyBanditGuardLQ.cost_lady_target_distance(cfg.w_g_lt_dist, cfg.px_target, cfg.py_target, params)
         Q = Q.at[tidx,idx_g].add(Qc)
         q = q.at[tidx,idx_g].add(qc)
 
@@ -921,7 +1044,7 @@ class DoubleInt_LQLBG_C2(DoubleInt_LQLBG_C1):
 
         The cost is from the perspective of the Bandit's objective to maximize the misalignment
         (i.e. minimize the alignment) of the Guard's velocity vector v_G with the the Bandit's
-        position vector relative to the guard: p_{B/G} = p_B - p_G. This is accomplished 
+        position vector relative to the guard: p_{B/G} = p_B - p_G. This is accomplished
         by minimizing dot(v_G, p_{B/G})
 
         Parameters
@@ -962,7 +1085,7 @@ class DoubleInt_LQLBG_C2(DoubleInt_LQLBG_C1):
         Q = Q.at[i_vy_g, i_py_g].set(-c_gammaGB)
 
         return Q, q
-    
+
     @staticmethod
     def cost_lady_target_distance(c_dLT: float, px_target, py_target, params) -> tuple[jnp.ndarray, jnp.ndarray]:
         """
@@ -993,8 +1116,8 @@ class DoubleInt_LQLBG_C2(DoubleInt_LQLBG_C1):
         i_py_l = params.GAME_AUX_STATE.I_LADY_PY
 
         # Diagonal terms
-        Q = Q.at[i_px_l, i_px_l].set(2 * c_dLT) 
-        Q = Q.at[i_py_l, i_py_l].set(2 * c_dLT) 
+        Q = Q.at[i_px_l, i_px_l].set(2 * c_dLT)
+        Q = Q.at[i_py_l, i_py_l].set(2 * c_dLT)
 
         # Linear term
         q = jnp.zeros(nx)
@@ -1002,3 +1125,128 @@ class DoubleInt_LQLBG_C2(DoubleInt_LQLBG_C1):
         q = q.at[i_py_l].set(-2 * c_dLT * py_target)
 
         return Q, q
+
+
+def scenario_config(name: str = "alignment_basic") -> dict:
+    """
+    Return a copy of one built-in example scenario.
+
+    The old development version of this example loaded JSON configuration
+    files. For a package example, keeping a few named scenarios in code makes
+    the modeling path easier to read and avoids presenting file-based
+    configuration as a PYDGENS convention.
+    """
+    key = SCENARIO_ALIASES.get(name, name)
+    if key not in EXAMPLE_SCENARIOS:
+        names = ", ".join(sorted(EXAMPLE_SCENARIOS))
+        aliases = ", ".join(sorted(SCENARIO_ALIASES))
+        raise ValueError(
+            f"Unknown scenario {name!r}. Available scenarios: {names}. "
+            f"Legacy aliases: {aliases}."
+        )
+    return deepcopy(EXAMPLE_SCENARIOS[key])
+
+
+def build_game_from_config(config: dict):
+    """
+    Build a Lady-Bandit-Guard game and initial state from a scenario config.
+    """
+    cfg = dict(config)
+    x0 = jnp.asarray(cfg.pop("init_aux_state"))
+    cost_model = cfg.pop("cost_model", "alignment").lower()
+    cfg.pop("description", None)
+
+    if cost_model in {"alignment", "full", "c2"}:
+        game_builder = LadyBanditGuardLQ
+    elif cost_model in {"distance", "distance_only", "c1"}:
+        game_builder = LadyBanditGuardDistanceLQ
+    else:
+        raise ValueError(
+            "cost_model must be one of 'alignment' or 'distance', "
+            f"got {cost_model!r}"
+        )
+
+    return game_builder(**cfg), x0
+
+
+def solve_example(scenario: str = "alignment_basic"):
+    """
+    Build, solve, and propagate a built-in Lady-Bandit-Guard LQ scenario.
+
+    Returns
+    -------
+    tuple
+        ``(lbg, strategy, trajectory)`` where ``lbg`` is the IR example
+        wrapper, ``strategy`` is the feedback Nash strategy returned by the LQ
+        solver, and ``trajectory`` is the propagated auxiliary state/control
+        trajectory.
+    """
+    config = scenario_config(scenario)
+    lbg, x0 = build_game_from_config(config)
+
+    strategy = solve_lqgame_feedback(lbg.game)
+    trajectory = propagate_system_trajectory(
+        lbg.game.cs,
+        x0=x0,
+        strategy=strategy,
+    )
+
+    return lbg, strategy, trajectory
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Solve a built-in Lady-Bandit-Guard LQ IR scenario.",
+    )
+    parser.add_argument(
+        "--scenario",
+        default="alignment_basic",
+        choices=sorted((*EXAMPLE_SCENARIOS, *SCENARIO_ALIASES)),
+        help="Built-in scenario to solve.",
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    lbg, strategy, trajectory = solve_example(args.scenario)
+
+    xs = trajectory.xs
+    us = trajectory.us
+    p = lbg.PARAMS
+    bandit_pos_idx = jnp.asarray([
+        p.GAME_AUX_STATE.I_BANDIT_PX,
+        p.GAME_AUX_STATE.I_BANDIT_PY,
+    ])
+    lady_pos_idx = jnp.asarray([
+        p.GAME_AUX_STATE.I_LADY_PX,
+        p.GAME_AUX_STATE.I_LADY_PY,
+    ])
+    guard_pos_idx = jnp.asarray([
+        p.GAME_AUX_STATE.I_GUARD_PX,
+        p.GAME_AUX_STATE.I_GUARD_PY,
+    ])
+
+    print("Lady-Bandit-Guard LQ IR example solved.")
+    print(f"Scenario: {args.scenario}")
+    print(f"Strategy shape: P={strategy.P.shape}, alpha={strategy.alpha.shape}")
+    print(f"Trajectory shape: xs={xs.shape}, us={us.shape}")
+    print("Initial positions:")
+    print(
+        "  "
+        f"bandit={xs[0, bandit_pos_idx]}, "
+        f"lady={xs[0, lady_pos_idx]}, "
+        f"guard={xs[0, guard_pos_idx]}"
+    )
+    print("Final positions:")
+    print(
+        "  "
+        f"bandit={xs[-1, bandit_pos_idx]}, "
+        f"lady={xs[-1, lady_pos_idx]}, "
+        f"guard={xs[-1, guard_pos_idx]}"
+    )
+    print(f"First joint control: {us[0] if us.size else jnp.array([])}")
+
+
+if __name__ == "__main__":
+    main()

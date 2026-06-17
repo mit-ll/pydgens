@@ -30,6 +30,14 @@ Build the same unicycle game directly with the intermediate representation (`IR`
 python src/pydgens/examples/ir_unicycle.py
 ```
 
+## IR Lady-Bandit-Guard
+
+Build and solve a richer linear-quadratic Lady-Bandit-Guard game directly with the LQ solver's IR objects:
+
+```bash
+python src/pydgens/examples/ir_lady_bandit_guard.py
+```
+
 ## Constrained Integrators
 
 Run the augmented-Lagrangian (`AL`) solver on a constrained nonlinear game with bounded controls:
