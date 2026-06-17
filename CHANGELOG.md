@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `examples/ir_unicycle.py` now mirrors `examples/unicycle.py` as an advanced IR companion example
 - renamed the legacy double-integrator LBG example to `examples/ir_lady_bandit_guard.py` and folded the non-plotting runner path into the example
 - renamed the legacy aerial LBG example to `examples/ir_lady_bandit_guard_nonlinear.py` and folded the non-plotting runner path into the example
+- renamed `examples/al_solve_example_1.py` to `examples/ir_constrained_integrators.py` and reframed it as an advanced AL IR tutorial
+- renamed `examples/al_solve_example_xxx.py` to `examples/ir_constrained_double_integrator_diagnostic.py` and marked it as a solver diagnostic reference
 
 ### Removed 
 

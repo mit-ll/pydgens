@@ -2,45 +2,44 @@
 # SPDX-License-Identifier: MIT
 
 """
-Example 1: Two-player single-integrator, running-cost-only, control bounds.
+Advanced example: a constrained two-player integrator game in IR form.
 
-This is meant to be the "hello world" for the AL solver stack:
-- multiple players (N=2)
-- non-trivial horizon (nt > 2)
-- dynamics feasibility (handled via μ in the primal-dual trajectory)
-- inequality constraints (control bounds) handled via AL (λ, ρ)
-- no state bounds, no coupling constraints (keep it vanilla)
+This is the lower-level companion to ``constrained_integrators.py``. It skips
+the frontend factories and constructs the augmented-Lagrangian (AL) solver's
+intermediate representation directly:
 
-Dynamics
---------
-Joint state:  x = [p1, p2]
-Joint control u = [u1, u2]
-Continuous-time dynamics:  ṗ_i = u_i
-Discretized internally (e.g. RK2):  p_{k+1} ≈ p_k + dt * u_k
+    1. define a time grid
+    2. define joint continuous-time dynamics
+    3. define one local-control running cost per player
+    4. define stagewise inequality constraints
+    5. build the constrained nonlinear IR game
+    6. seed the primal-dual trajectory and AL state
+    7. solve with the AL solver
 
-Costs (per player, LOCAL control)
----------------------------------
-Running only (terminal cost = 0):
-  l_i(t, x, u_i) = 0.5*q*(p_i - p_i_goal)^2 + 0.5*r*u_i^2
+Problem
+-------
+Joint state:
 
-Constraints
------------
-Control bounds per stage:
-  |u_i| <= u_max   (encoded as 2 inequalities per player)
+    x = [p1, p2]
 
-Intuition / expected behavior
------------------------------
-- Each player independently pushes toward its goal.
-- If u_max is high enough, you'll see a smooth (roughly proportional) policy.
-- If u_max is tight, you'll see saturation at ±u_max early on.
+Joint control:
 
-Note on AL init (λ=0, ρ=1)
---------------------------
-A common starting point: λ=0 and modest ρ (often 1) makes the first outer iteration behave
-like a simple penalty method; λ is then “learned” via dual ascent, and ρ increases if needed.
+    u = [u1, u2]
+
+Dynamics:
+
+    p_dot_i = u_i
+
+Each player independently wants to move toward its own goal while paying
+control effort. The only constraints are simple control bounds:
+
+    |u_i| <= u_max
+
+This keeps the example focused on the AL-specific IR objects:
+``FixedStepPrimalDualTrajectory``, ``JointAugmentedLagrangianState``, and
+``GameConstraintGridMap``.
 """
 
-import logging
 from typing import Tuple
 
 import jax.numpy as jnp
@@ -64,7 +63,7 @@ def u_i(i: int) -> int:
     return i
 
 
-def make_game_two_player_single_integrator(
+def build_ir_constrained_integrator_game(
     *,
     nt: int = 31,
     dt: float = 0.1,
@@ -79,6 +78,7 @@ def make_game_two_player_single_integrator(
     trajtypes.FixedStepPrimalDualTrajectory,
     altypes.JointAugmentedLagrangianState,
 ]:
+    # Step 1: define the time grid and dimensions.
     tg = systypes.TimeGrid(nt=nt, dt=dt, t0=0.0)
     N = 2
     nx = 2
@@ -86,7 +86,11 @@ def make_game_two_player_single_integrator(
     u_splits = jnp.array([1, 1], dtype=jnp.int32)
     K = nt - 1
 
-    # Continuous-time dynamics: p_dot = u
+    # Step 2: define the joint continuous-time dynamics.
+    #
+    # The AL IR uses a joint dynamics callable, just like the nonlinear iLQ
+    # examples. Player ownership of control entries is encoded separately by
+    # ``u_splits``.
     def f_cont(t, x, u):
         # x: (2,), u: (2,)
         return jnp.array([u[u_i(0)], u[u_i(1)]], dtype=x.dtype)
@@ -95,7 +99,10 @@ def make_game_two_player_single_integrator(
 
     p_star = jnp.array([p_goal[0], p_goal[1]], dtype=dtype)
 
-    # Running cost must be LOCAL control domain per your NonlinearGameType2 rules
+    # Step 3: define one local-control running cost per player.
+    #
+    # ``NonlinearGameType2`` expects AL costs to state whether they consume
+    # local or joint controls. Here each player cost sees only ``u_i``.
     def make_player_cost(i: int) -> costtypes.PlayerCostSpecContinuous:
         def running_i(t, x, u_local):
             # u_local shape (1,)
@@ -115,7 +122,11 @@ def make_game_two_player_single_integrator(
 
     costs = [make_player_cost(0), make_player_cost(1)]
 
-    # --- constraints: |u_i| <= u_max at all stages ---
+    # Step 4: define stagewise inequality constraints.
+    #
+    # Inequalities are represented in standard form c(t, x, u) <= 0. The box
+    # bounds |u_i| <= u_max therefore become two scalar inequalities per
+    # player at each control interval.
     active_all = tuple(range(K))
 
     def u_box(t, x, u):
@@ -137,6 +148,7 @@ def make_game_two_player_single_integrator(
 
     constraints = contypes.GameConstraintGridMap(ineq_blocks=(b_u,), eq_blocks=())
 
+    # Step 5: build the constrained nonlinear IR game.
     nlgame = gametypes.NonlinearGameType2(
         cs=cs,
         N=N,
@@ -145,11 +157,11 @@ def make_game_two_player_single_integrator(
         u_splits=u_splits,
     )
 
-    # --- initial guess: straight-line position interpolation + constant control guess ---
+    # Step 6a: seed the primal trajectory with a straight-line control guess.
     x0 = jnp.array([p0[0], p0[1]], dtype=dtype)
     T = float((nt - 1) * dt)
 
-    # “constant velocity to goal” guess (then clip to bounds)
+    # Constant velocity to each goal, clipped to satisfy the control bounds.
     u_guess = (p_star - x0) / T
     u_guess = jnp.clip(u_guess, -u_max, u_max)
 
@@ -165,12 +177,15 @@ def make_game_two_player_single_integrator(
     # control guess is constant each stage
     us0 = jnp.tile(u_guess[None, :], (K, 1))  # (K,2)
 
-    # dynamics multipliers μ init to zero
+    # Dynamics multipliers start at zero. The AL/Newton iterations update them.
     ls0 = jnp.zeros((K, N, nx), dtype=dtype)
 
     op0 = trajtypes.FixedStepPrimalDualTrajectory(tg=tg, xs=xs0, us=us0, ls=ls0)
 
-    # AL init: λ=0, ρ=1
+    # Step 6b: seed the AL state with lambda=0 and rho=1.
+    #
+    # This makes the first outer iteration behave like a modest penalty
+    # method. Later outer iterations update lambda and may increase rho.
     alstate0 = altypes.JointAugmentedLagrangianState(
         lam_ineq=jnp.zeros((constraints.nc_ineq,), dtype=dtype),
         rho_ineq=jnp.ones((constraints.nc_ineq,), dtype=dtype),
@@ -181,8 +196,11 @@ def make_game_two_player_single_integrator(
     return nlgame, op0, alstate0
 
 
-def main():
-    nlgame, op0, alstate0 = make_game_two_player_single_integrator(
+def solve_example():
+    """
+    Build and solve the constrained integrator AL IR example.
+    """
+    nlgame, op0, alstate0 = build_ir_constrained_integrator_game(
         nt=31,
         dt=0.1,
         u_max=2.0,
@@ -193,11 +211,7 @@ def main():
         dtype=jnp.float32,
     )
 
-    # Optional debug logging
-    logging.basicConfig(level=logging.INFO)  # configure handlers once
-    logging.getLogger("pydgens.alsolver").setLevel(logging.DEBUG)   # enable debug logging for alsolve module
-    alsolver.logger.debug("debug enabled")  # (optional) verify
-
+    # Step 7: solve with the augmented-Lagrangian solver.
     op_out, al_out, diag = alsolver.al_solve_autodiff(
         nlgame,
         op0,
@@ -228,6 +242,12 @@ def main():
         ls_max_iters=25,
         normkind="l1_mean",
     )
+
+    return nlgame, op_out, al_out, diag
+
+
+def main():
+    nlgame, op_out, al_out, diag = solve_example()
 
     print("\n=== AL solve summary ===")
     print(f"converged: {diag.converged}  reason: {diag.reason}  iters: {diag.iters}")

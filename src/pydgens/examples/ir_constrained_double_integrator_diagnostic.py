@@ -1,13 +1,28 @@
 # Copyright 2026 MIT Lincoln Laboratory
 # SPDX-License-Identifier: MIT
 
-# Two-player, 1D double integrators seeking terminal states while maintaining
-# a separation requirement
+"""
+Diagnostic example: constrained two-player double-integrator merge in IR form.
+
+This example is intentionally kept as a reference problem for future AL solver
+improvements. It is more demanding than ``ir_constrained_integrators.py``:
+
+    - each player has 1D double-integrator dynamics
+    - controls are bounded accelerations
+    - speeds are constrained to remain nonnegative and below a maximum
+    - players must maintain a minimum separation
+    - terminal goals are represented as terminal costs
+
+At the time this example was added, the AL solver can run indefinitely or take
+an impractically long time on this problem. For that reason, running the module
+does not launch the solver by default. Use ``--run-solver`` only when you are
+actively working on AL solver diagnostics/performance.
+"""
 
 from __future__ import annotations
 
+import argparse
 import logging
-
 from typing import Tuple
 
 import jax.numpy as jnp
@@ -39,7 +54,7 @@ def u_a(i: int) -> int:
 # Problem construction
 # ---------------------------------------------------------------------
 
-def make_game_two_player_merge(
+def build_ir_double_integrator_merge_diagnostic(
     *,
     nt: int = 21,
     dt: float = 0.1,
@@ -50,12 +65,24 @@ def make_game_two_player_merge(
     dtype=jnp.float32,
 ) -> Tuple[gametypes.NonlinearGameType2, trajtypes.FixedStepPrimalDualTrajectory, altypes.JointAugmentedLagrangianState]:
     """
-    Two-player 1D merge-like toy:
-      - each player: (p_i, v_i), control a_i
-      - objective: reach terminal goals while using small effort
-      - constraints: |a_i|<=a_max, 0<=v_i<=v_max, p2-p1>=d_min, terminal equality goals
+    Build the diagnostic constrained double-integrator merge problem.
+
+    Joint state:
+        x = [p1, v1, p2, v2]
+
+    Joint control:
+        u = [a1, a2]
+
+    Constraints:
+        |a_i| <= a_max
+        0 <= v_i <= v_max
+        p2 - p1 >= d_min
+
+    The terminal goals are currently costs rather than hard equality
+    constraints. Commented terminal equality code is left nearby because it is
+    useful while experimenting with AL solver behavior.
     """
-    # time grid (time step size and horizon) over which problem is defined
+    # Step 1: define the time grid and dimensions.
     tg = systypes.TimeGrid(nt=nt, dt=dt, t0=0.0)
     N = 2   # number of players
     nx = 4  # dimension of joint state space
@@ -63,7 +90,6 @@ def make_game_two_player_merge(
     u_splits = jnp.array([1, 1], dtype=jnp.int32)   # which player controls which slice of joint control space
 
     # initial conditions that ensure feasibility
-    p1_0 = 0.0  # player 1 initial position
     v1_0 = 0.0  # player 1 initial velocity
     p2_0 = d_min + 0.2  # player 2 initial position
     v2_0 = 0.0  # player 2 initial velocity
@@ -75,11 +101,7 @@ def make_game_two_player_merge(
     p2_f = p1_f + d_min + 0.2
     v2_f = 4.0
 
-    # --------------------------
-    # Continuous-time dynamics
-    # xdot = f(t,x,u)
-    # Joint state & control
-    # --------------------------
+    # Step 2: define joint continuous-time double-integrator dynamics.
     def f_cont(t, x, u):
         # x = [p1, v1, p2, v2], joint state vector
         # u = [a1, a2],         joint control vector
@@ -89,11 +111,11 @@ def make_game_two_player_merge(
 
     cs = systypes.SampledContinuousSystemType1(tg=tg, dynamics=f_cont, nx=nx, nu=nu)
 
-    # --------------------------
-    # Costs (LOCAL control, separable)
-    # running_i(t, x, u_i) where u_i is shape (nu_i,)
-    # terminal_i(t, x)
-    # --------------------------
+    # Step 3: define one local-control cost per player.
+    #
+    # The terminal cost is currently the important part of this diagnostic
+    # problem. The richer running cost is left commented below because it is a
+    # useful knob when testing AL residual and convergence behavior.
     # Targets: player 1 slightly behind player 2; both want moderate speed
     p_star = jnp.array([p1_f, p2_f], dtype=dtype)
     v_star = jnp.array([v1_f, v2_f], dtype=dtype)
@@ -124,11 +146,12 @@ def make_game_two_player_merge(
                 qf_v * (vi - v_star[i]) ** 2
             )
 
+        # Swap this in while experimenting with smoother running objectives.
         # return costtypes.PlayerCostSpecContinuous(
         #     running=running_i,
         #     terminal=terminal_i,
         #     control_domain=costtypes.ControlDomain.LOCAL,
-        #     control_coupling=costtypes.ControlCoupling.SEPARABLE,
+        #     control_coupling=costtypes.ControlStructure.LOCAL_ONLY,
         # )
         return costtypes.PlayerCostSpecContinuous(
             running=lambda t, x, u_i: 0.0,
@@ -139,9 +162,7 @@ def make_game_two_player_merge(
 
     costs = [make_player_cost(0), make_player_cost(1)]
 
-    # --------------------------
-    # Constraints via blocks
-    # --------------------------
+    # Step 4: define constraints via grid-map blocks.
     # Helper: "all stage steps" are k=0..nt-2
     active_all = tuple(range(nt - 1))
 
@@ -209,9 +230,7 @@ def make_game_two_player_merge(
         # eq_blocks=(b_goal,),
     )
 
-    # --------------------------
-    # Game
-    # --------------------------
+    # Step 5: build the constrained nonlinear IR game.
     nlgame = gametypes.NonlinearGameType2(
         cs=cs,
         N=N,
@@ -220,9 +239,7 @@ def make_game_two_player_merge(
         u_splits=u_splits,
     )
 
-    # --------------------------
-    # Initial guess trajectory
-    # --------------------------
+    # Step 6a: seed the primal-dual trajectory.
     x0 = jnp.array([p1_0, v1_0, p2_0, v2_0], dtype=dtype)
 
     # crude guess: linearly ramp positions to targets, constant velocity guess
@@ -240,11 +257,7 @@ def make_game_two_player_merge(
 
     op0 = trajtypes.FixedStepPrimalDualTrajectory(tg=tg, xs=xs0, us=us0, ls=ls0)
 
-    # --------------------------
-    # Initial AL state (λ, ρ)
-    # --------------------------
-    # Initialize AL params with λ=0 and ρ=1: first outer iter behaves like a penalty method (esp. for violated ineqs);
-    # then λ is learned via dual ascent and ρ is increased to enforce feasibility if needed.
+    # Step 6b: seed the AL state with lambda=0 and rho=1.
     alstate0 = altypes.JointAugmentedLagrangianState(
         lam_ineq=jnp.zeros((constraints.nc_ineq,), dtype=dtype),
         rho_ineq=jnp.ones((constraints.nc_ineq,), dtype=dtype),
@@ -255,8 +268,15 @@ def make_game_two_player_merge(
     return nlgame, op0, alstate0
 
 
-def main():
-    nlgame, op0, alstate0 = make_game_two_player_merge()
+def solve_diagnostic_example():
+    """
+    Run the known-problematic AL solve.
+
+    This function is intentionally separate from ``main`` so importing or
+    running the module for inspection does not accidentally launch the slow or
+    non-terminating solver path.
+    """
+    nlgame, op0, alstate0 = build_ir_double_integrator_merge_diagnostic()
 
     # create logger to pass to solver
     logging.basicConfig(level=logging.INFO) # global config of root logger, to be run once
@@ -297,6 +317,46 @@ def main():
         normkind="l1_mean",
         # logger=logger
     )
+
+    return nlgame, op_out, al_out, diag
+
+
+def print_problem_summary() -> None:
+    nlgame, op0, alstate0 = build_ir_double_integrator_merge_diagnostic()
+
+    print("Constrained double-integrator AL diagnostic example.")
+    print("This problem is intentionally retained as a non-smoke-test solver diagnostic.")
+    print("By default, the solver is not run because this case is currently known to be slow or non-terminating.")
+    print("\n=== problem dimensions ===")
+    print(f"players: {nlgame.N}")
+    print(f"state dimension: {nlgame.nx}")
+    print(f"control dimension: {nlgame.nu}")
+    print(f"time nodes: {nlgame.nt}")
+    print(f"inequality constraints: {nlgame.constraints.nc_ineq}")
+    print(f"equality constraints: {nlgame.constraints.nc_eq}")
+    print("\nRun with --run-solver only while working on AL solver diagnostics.")
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Inspect or run the constrained double-integrator AL diagnostic.",
+    )
+    parser.add_argument(
+        "--run-solver",
+        action="store_true",
+        help="Run the currently problematic AL solve path.",
+    )
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+
+    if not args.run_solver:
+        print_problem_summary()
+        return
+
+    nlgame, op_out, al_out, diag = solve_diagnostic_example()
 
     print("\n=== AL solve summary ===")
     print(f"converged: {diag.converged}  reason: {diag.reason}  iters: {diag.iters}")
