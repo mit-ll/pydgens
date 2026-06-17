@@ -11,7 +11,7 @@ Examples live in [`src/pydgens/examples/`](../src/pydgens/examples/). These scri
 Compute a feedback Nash equilibrium for a simple linear-quadratic game with the `LQ` solver:
 
 ```bash
-python src/pydgens/examples/tug_o_war.py
+python -m pydgens.examples.tug_o_war
 ```
 
 ## Two-Player Unicycle
@@ -19,7 +19,7 @@ python src/pydgens/examples/tug_o_war.py
 Run the iterative linear-quadratic solver (`iLQ`) on a nonlinear game where two players control a shared unicycle system:
 
 ```bash
-python src/pydgens/examples/unicycle.py
+python -m pydgens.examples.unicycle
 ```
 
 ## IR Two-Player Unicycle
@@ -27,7 +27,7 @@ python src/pydgens/examples/unicycle.py
 Build the same unicycle game directly with the intermediate representation (`IR`) objects used by the iLQ solver:
 
 ```bash
-python src/pydgens/examples/ir_unicycle.py
+python -m pydgens.examples.ir_unicycle
 ```
 
 ## IR Lady-Bandit-Guard
@@ -35,7 +35,7 @@ python src/pydgens/examples/ir_unicycle.py
 Build and solve a richer linear-quadratic Lady-Bandit-Guard game directly with the LQ solver's IR objects:
 
 ```bash
-python src/pydgens/examples/ir_lady_bandit_guard.py
+python -m pydgens.examples.ir_lady_bandit_guard
 ```
 
 ## IR Nonlinear Lady-Bandit-Guard
@@ -43,7 +43,7 @@ python src/pydgens/examples/ir_lady_bandit_guard.py
 Build and solve the nonlinear unicycle-dynamics Lady-Bandit-Guard counterpart directly with the iLQ solver's IR objects:
 
 ```bash
-python src/pydgens/examples/ir_lady_bandit_guard_nonlinear.py
+python -m pydgens.examples.ir_lady_bandit_guard_nonlinear
 ```
 
 ## Constrained Integrators
@@ -51,5 +51,5 @@ python src/pydgens/examples/ir_lady_bandit_guard_nonlinear.py
 Run the augmented-Lagrangian (`AL`) solver on a constrained nonlinear game with bounded controls:
 
 ```bash
-python src/pydgens/examples/constrained_integrators.py
+python -m pydgens.examples.constrained_integrators
 ```

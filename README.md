@@ -29,40 +29,22 @@ PYDGENS currently supports three main solver paths:
 Run a minimal linear-quadratic tug-of-war game solved with the LQ solver:
 
 ```bash
-python src/pydgens/examples/tug_o_war.py
+python -m pydgens.examples.tug_o_war
 ```
 
 Run a nonlinear two-player unicycle game solved with the iterative LQ solver:
 
 ```bash
-python src/pydgens/examples/unicycle.py
-```
-
-Run the same unicycle game built directly with the lower-level IR interfaces:
-
-```bash
-python src/pydgens/examples/ir_unicycle.py
-```
-
-Run a richer linear-quadratic Lady-Bandit-Guard game built directly with the lower-level IR interfaces:
-
-```bash
-python src/pydgens/examples/ir_lady_bandit_guard.py
-```
-
-Run the nonlinear unicycle-dynamics Lady-Bandit-Guard counterpart built directly with the lower-level IR interfaces:
-
-```bash
-python src/pydgens/examples/ir_lady_bandit_guard_nonlinear.py
+python -m pydgens.examples.unicycle
 ```
 
 Run a constrained two-player integrator game solved with the augmented-Lagrangian solver:
 
 ```bash
-python src/pydgens/examples/constrained_integrators.py
+python -m pydgens.examples.constrained_integrators
 ```
 
-More examples live in [`src/pydgens/examples/`](src/pydgens/examples/).
+More examples, including advanced examples that make use of the intermediate representations (IR), are listed in the [examples documentation](https://mit-ll.github.io/pydgens/examples/).
 
 ## Documentation
 
