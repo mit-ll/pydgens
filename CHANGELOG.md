@@ -11,7 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `test_tug_o_war.py` smoketests of basic LQ example
 - `test_unicycle.py` smoketest of basic ILQ example
-- 
+- `test_constrained_integrators.py` smoketest of basic AL example
+
+### Changed
+
+- `examples/constrained_integrators.py` removing specific args for solver to make example simpler, more friendly for a first-time user
 
 ## [v0.6.1] - 2026.06.05
 
