@@ -6,6 +6,21 @@ icon: material/file-document-check
 
 Examples live in [`src/pydgens/examples/`](../src/pydgens/examples/). These scripts are useful both as smoke tests and as starting points for new game formulations.
 
+## At A Glance
+
+| Example | Command | Solver | Solution Type | Interface | Status | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| Tug-of-War | `python -m pydgens.examples.tug_o_war` | `LQ` | Feedback Nash equilibrium | Top-level API | Polished | Smallest LQ walkthrough; includes analytical comparison. |
+| Two-Player Unicycle | `python -m pydgens.examples.unicycle` | `iLQ` | Local feedback Nash equilibrium | Top-level API | Polished | Beginner nonlinear example using the semantic frontend. |
+| IR Two-Player Unicycle | `python -m pydgens.examples.ir_unicycle` | `iLQ` | Local feedback Nash equilibrium | IR | Polished | Direct IR companion to `unicycle.py`. |
+| IR Lady-Bandit-Guard | `python -m pydgens.examples.ir_lady_bandit_guard` | `LQ` | Feedback Nash equilibrium | IR | Polished | Advanced three-player LQ example built from cost matrices. |
+| Constrained Integrators | `python -m pydgens.examples.constrained_integrators` | `AL` | Local open-loop Nash equilibrium | Top-level API | Polished | Beginner constrained example using the frontend API. |
+| IR Constrained Integrators | `python -m pydgens.examples.ir_constrained_integrators` | `AL` | Local open-loop Nash equilibrium | IR | Polished | Advanced AL companion to `constrained_integrators.py`. |
+| IR Nonlinear Lady-Bandit-Guard | `python -m pydgens.examples.ir_lady_bandit_guard_nonlinear` | `iLQ` | Local feedback Nash equilibrium attempt | IR | Diagnostic | Runs to completion but may report non-convergence. |
+| IR Constrained Double-Integrator Diagnostic | `python -m pydgens.examples.ir_constrained_double_integrator_diagnostic` | `AL` | Local open-loop Nash equilibrium attempt | IR | Diagnostic | Prints a problem summary by default; use `--run-solver` to exercise the known-problematic solve path. |
+
+The `Interface` column distinguishes the beginner-facing semantic frontend from the lower-level solver IR. The `Status` column distinguishes examples intended as polished tutorials from solver-diagnostic reference problems.
+
 ## Tug-of-War
 
 Compute a feedback Nash equilibrium for a simple linear-quadratic game with the `LQ` solver:
