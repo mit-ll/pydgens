@@ -9,7 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `test_tug_o_war.py` smoketest of basic LQ example
+- `test_tug_o_war.py` smoketests of basic LQ example
+- `test_unicycle.py` smoketest of basic ILQ example
+- 
 
 ## [v0.6.1] - 2026.06.05
 
