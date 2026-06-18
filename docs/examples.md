@@ -12,6 +12,7 @@ Examples live in [`src/pydgens/examples/`](../src/pydgens/examples/). These scri
 | --- | --- | --- | --- | --- |
 | [Tug-of-War](../src/pydgens/examples/tug_o_war.py) | `python -m pydgens.examples.tug_o_war` | `LQ` -> feedback Nash equilibrium | Top-level API | Smallest LQ walkthrough; includes analytical comparison. |
 | [Two-Player Unicycle](../src/pydgens/examples/unicycle.py) | `python -m pydgens.examples.unicycle` | `iLQ` -> local feedback Nash equilibrium | Top-level API | Beginner nonlinear example using the semantic frontend. |
+| [Multi-Car Intersection](../src/pydgens/examples/multi_car_intersection.py) | `python -m pydgens.examples.multi_car_intersection` | `iLQ` -> local feedback Nash equilibrium | Top-level API | Showcase nonlinear example with soft collision, lane, and speed penalties. |
 | [Constrained Integrators](../src/pydgens/examples/constrained_integrators.py) | `python -m pydgens.examples.constrained_integrators` | `AL` -> local open-loop Nash equilibrium | Top-level API | Beginner constrained example using the frontend API. |
 | [IR Two-Player Unicycle](../src/pydgens/examples/ir_unicycle.py) | `python -m pydgens.examples.ir_unicycle` | `iLQ` -> local feedback Nash equilibrium | IR | Direct IR companion to `unicycle.py`. |
 | [IR Lady-Bandit-Guard](../src/pydgens/examples/ir_lady_bandit_guard.py) | `python -m pydgens.examples.ir_lady_bandit_guard` | `LQ` -> feedback Nash equilibrium | IR | Advanced three-player LQ example built from cost matrices. |
@@ -41,6 +42,32 @@ Run the iterative linear-quadratic solver (`iLQ`) on a nonlinear game where two 
 python -m pydgens.examples.unicycle
 ```
 
+## Multi-Car Intersection
+
+Source: [`src/pydgens/examples/multi_car_intersection.py`](../src/pydgens/examples/multi_car_intersection.py)
+
+Run a four-car nonlinear intersection game with bicycle-like vehicle dynamics, soft collision avoidance, lane keeping, speed penalties, and iLQ feedback solving:
+
+```bash
+python -m pydgens.examples.multi_car_intersection
+```
+
+Optional visualization script:
+
+```bash
+python scripts/visuals/multi_car_intersection_gif.py --compare-naive
+```
+
+## Constrained Integrators
+
+Source: [`src/pydgens/examples/constrained_integrators.py`](../src/pydgens/examples/constrained_integrators.py)
+
+Run the augmented-Lagrangian (`AL`) solver on a constrained nonlinear game with bounded controls:
+
+```bash
+python -m pydgens.examples.constrained_integrators
+```
+
 ## IR Two-Player Unicycle
 
 Source: [`src/pydgens/examples/ir_unicycle.py`](../src/pydgens/examples/ir_unicycle.py)
@@ -59,16 +86,6 @@ Build and solve a richer linear-quadratic Lady-Bandit-Guard game directly with t
 
 ```bash
 python -m pydgens.examples.ir_lady_bandit_guard
-```
-
-## Constrained Integrators
-
-Source: [`src/pydgens/examples/constrained_integrators.py`](../src/pydgens/examples/constrained_integrators.py)
-
-Run the augmented-Lagrangian (`AL`) solver on a constrained nonlinear game with bounded controls:
-
-```bash
-python -m pydgens.examples.constrained_integrators
 ```
 
 ## IR Constrained Integrators

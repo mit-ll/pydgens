@@ -42,6 +42,9 @@ import pydgens as pdg
 NX_CAR = 4  # state dimensions per car (player)
 NU_CAR = 2  # control dimensions per car (player)
 
+DEFAULT_NT = 51
+DEFAULT_DT = 0.1
+
 @dataclass(frozen=True)
 class CarSpec:
     """
@@ -58,7 +61,7 @@ class CarSpec:
     goal_xy: tuple[float, float]
     lane_point: tuple[float, float]
     lane_heading: float
-    lane_width: float = 1.0
+    lane_width: float = 2.0
     wheelbase: float = 2.5
     nominal_speed: float = 3.0
     min_speed: float = 0.0
@@ -71,15 +74,15 @@ class CarCostWeights:
     Cost weights shared by the default cars.
     """
 
-    proximity: float = 20.0
-    goal: float = 0.8
-    steering: float = 0.25
+    proximity: float = 10.0
+    goal: float = 0.1
+    steering: float = 1.0
     acceleration: float = 0.2
-    lane_centerline: float = 0.8
-    lane_boundary: float = 10.0
-    nominal_speed: float = 0.6
-    speed_bounds: float = 12.0
-    proximity_threshold: float = 2.5
+    lane_centerline: float = 0.5
+    lane_boundary: float = 5.0
+    nominal_speed: float = 0.2
+    speed_bounds: float = 1.0
+    proximity_threshold: float = 5.0
 
 
 def car_state_slice(car_index: int) -> slice:
@@ -118,14 +121,14 @@ def default_car_specs() -> tuple[CarSpec, ...]:
         ),
         CarSpec(
             name="northbound",
-            initial_state=(1.0, -8.0, 0.5 * jnp.pi, 3.0),
+            initial_state=(1.0, -6.0, 0.5 * jnp.pi, 3.0),
             goal_xy=(1.0, 8.0),
             lane_point=(1.0, 0.0),
             lane_heading=0.5 * jnp.pi,
         ),
         CarSpec(
             name="southbound",
-            initial_state=(-1.0, 8.0, -0.5 * jnp.pi, 3.0),
+            initial_state=(-1.0, 6.0, -0.5 * jnp.pi, 3.0),
             goal_xy=(-1.0, -8.0),
             lane_point=(-1.0, 0.0),
             lane_heading=-0.5 * jnp.pi,
@@ -237,8 +240,8 @@ def build_multi_car_intersection_game(
     *,
     car_specs: Sequence[CarSpec] | None = None,
     weights: CarCostWeights = CarCostWeights(),
-    nt: int = 41,
-    dt: float = 0.1,
+    nt: int = DEFAULT_NT,
+    dt: float = DEFAULT_DT,
 ):
     """
     Build a parameterized frontend nonlinear intersection game.
@@ -308,6 +311,7 @@ def main() -> None:
         game,
         x0=x0,
         method="ilq",
+        max_iters=100,
     )
 
     states = solution.states
