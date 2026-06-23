@@ -129,7 +129,7 @@ def test_quadratic_cost_factory_applies_weights_and_targets():
     cost = pdg.quadratic_cost(
         nx=3,
         nu=2,
-        state_weights=[2.0, 4.0],
+        state_weights=[2.0, -4.0],
         state_indices=[0, 2],
         state_target=[10.0, 20.0, 30.0],
         control_weights=[5.0],
@@ -139,7 +139,7 @@ def test_quadratic_cost_factory_applies_weights_and_targets():
 
     assert jnp.allclose(
         cost.Qp,
-        jnp.diag(jnp.array([2.0, 0.0, 4.0])),
+        jnp.diag(jnp.array([2.0, 0.0, -4.0])),
     )
     assert jnp.allclose(
         cost.Rp,
@@ -265,14 +265,14 @@ def test_quadratic_cost_factory_applies_terminal_state_weights_and_target():
     cost = pdg.quadratic_cost(
         nx=3,
         nu=2,
-        terminal_state_weights=[2.0, 4.0],
+        terminal_state_weights=[2.0, -4.0],
         terminal_state_indices=[0, 2],
         terminal_state_target=[10.0, 20.0, 30.0],
     )
 
     assert jnp.allclose(
         cost.Qp_terminal,
-        jnp.diag(jnp.array([2.0, 0.0, 4.0])),
+        jnp.diag(jnp.array([2.0, 0.0, -4.0])),
     )
     assert jnp.allclose(
         cost.x_ref_terminal,
@@ -736,18 +736,20 @@ def test_add_state_cost_accumulates():
     assert jnp.allclose(cost.Qp, expected)
 
 
-def test_add_state_cost_weights_must_be_nonnegative():
+def test_add_state_cost_allows_negative_weights():
 
     cost = pdg.costs.QuadraticPlayerCost(
         nx=3,
         nu=2,
     )
 
-    with pytest.raises(ValueError, match="nonnegative"):
+    cost.add_state_cost(
+        weights=[1.0, -1.0, 2.0],
+    )
 
-        cost.add_state_cost(
-            weights=[1.0, -1.0, 2.0],
-        )
+    expected = jnp.diag(jnp.array([1.0, -1.0, 2.0]))
+
+    assert jnp.allclose(cost.Qp, expected)
 
 
 def test_add_state_cost_indices_and_weights_must_match():
@@ -851,6 +853,28 @@ def test_add_control_cost_indices_and_weights_must_match():
             weights=[1.0],
             indices=[0, 1],
         )
+
+
+# ---------------------------------------------------------------------
+# add_terminal_state_cost
+# ---------------------------------------------------------------------
+
+
+def test_add_terminal_state_cost_allows_negative_weights():
+
+    cost = pdg.costs.QuadraticPlayerCost(
+        nx=3,
+        nu=2,
+    )
+
+    cost.add_terminal_state_cost(
+        weights=[1.0, -1.0],
+        indices=[0, 2],
+    )
+
+    expected = jnp.diag(jnp.array([1.0, 0.0, -1.0]))
+
+    assert jnp.allclose(cost.Qp_terminal, expected)
 
 
 # ---------------------------------------------------------------------

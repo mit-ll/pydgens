@@ -83,7 +83,7 @@ def quadratic_cost(
     This factory defines diagonal quadratic running and terminal costs over
     the joint state and joint control spaces. It is the recommended entry
     point for linear-quadratic games whose penalties can be described by
-    nonnegative scalar weights.
+    scalar weights.
 
     Conceptually, the returned cost represents:
 
@@ -103,8 +103,9 @@ def quadratic_cost(
         Joint control dimension.
 
     state_weights:
-        Optional nonnegative weights for quadratic state penalties. If
-        ``state_indices`` is omitted, this must have length ``nx``.
+        Optional weights for quadratic state terms. Weights may be positive
+        or negative. If ``state_indices`` is omitted, this must have length
+        ``nx``.
 
     state_indices:
         Optional joint-state indices to penalize. If omitted, the state
@@ -114,9 +115,9 @@ def quadratic_cost(
         Optional desired joint-state reference ``x_ref``.
 
     terminal_state_weights:
-        Optional nonnegative weights for terminal quadratic state penalties.
-        If ``terminal_state_indices`` is omitted, this must have length
-        ``nx``.
+        Optional weights for terminal quadratic state terms. Weights may be
+        positive or negative. If ``terminal_state_indices`` is omitted, this
+        must have length ``nx``.
 
     terminal_state_indices:
         Optional joint-state indices to penalize at the terminal state. If
@@ -213,8 +214,7 @@ def matrix_quadratic_cost(
     This is the LQ companion to ``quadratic_cost(...)`` for games that need
     coupled state terms such as ``||p_guard - alpha p_bandit||^2`` or
     indefinite state rewards/penalties. The simpler ``quadratic_cost(...)``
-    remains the recommended beginner-facing factory for diagonal,
-    nonnegative weights.
+    remains the recommended beginner-facing factory for diagonal weights.
 
     Parameters
     ----------
@@ -383,11 +383,11 @@ class QuadraticPlayerCost(AbstractPlayerCost):
     executable IR representations.
 
     The beginner-facing ``quadratic_cost(...)`` factory builds diagonal costs
-    from nonnegative scalar weights for simplicity and clarity. Direct matrix
-    assignment through ``Qp``, ``Rp``, ``Qp_terminal``, or the explicit
-    ``set_*_matrix`` methods supports full matrices where the solver supports
-    them. State matrices must be symmetric and may be indefinite; control
-    matrices must be symmetric positive semidefinite.
+    from scalar weights for simplicity and clarity. Direct matrix assignment
+    through ``Qp``, ``Rp``, ``Qp_terminal``, or the explicit ``set_*_matrix``
+    methods supports full matrices where the solver supports them. State
+    matrices must be symmetric and may be indefinite; control matrices must
+    be symmetric positive semidefinite.
 
     Attributes
     ----------
@@ -615,7 +615,7 @@ class QuadraticPlayerCost(AbstractPlayerCost):
         Parameters
         ----------
         weights:
-            Nonnegative penalty weights.
+            Diagonal state weights. Values may be positive or negative.
 
         indices:
             Joint-state indices to penalize.
@@ -624,11 +624,6 @@ class QuadraticPlayerCost(AbstractPlayerCost):
         """
 
         weights = jnp.asarray(weights)
-
-        if jnp.any(weights < 0):
-            raise ValueError(
-                "`weights` must be nonnegative."
-            )
 
         if indices is None:
 
@@ -731,14 +726,19 @@ class QuadraticPlayerCost(AbstractPlayerCost):
     ):
         """
         Add diagonal quadratic penalties on terminal joint-state variables.
+
+        Parameters
+        ----------
+        weights:
+            Diagonal terminal-state weights. Values may be positive or
+            negative.
+
+        indices:
+            Joint-state indices to penalize at the terminal node. If omitted,
+            penalties are applied to all state dimensions.
         """
 
         weights = jnp.asarray(weights)
-
-        if jnp.any(weights < 0):
-            raise ValueError(
-                "`weights` must be nonnegative."
-            )
 
         if indices is None:
 

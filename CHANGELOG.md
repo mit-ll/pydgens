@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `examples/multi_car_intersection.py` now warm-starts iLQ with a staggered lane-following initial strategy
 - `QuadraticPlayerCost` matrix property setters now provide the canonical validation path for full state/control matrices
 - Frontend public API docstrings clarified for generated API documentation
+- `quadratic_cost(...)` now allows negative diagonal state and terminal-state weights, matching full state matrix behavior
 
 ## [v0.6.2] - 2026.06.17
 
