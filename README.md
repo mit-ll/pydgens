@@ -9,6 +9,8 @@
   ·
   <a href="https://mit-ll.github.io/pydgens/examples/">Examples</a>
   ·
+  <a href="https://mit-ll.github.io/pydgens/api/">API</a>
+  ·
   <a href="https://mit-ll.github.io/pydgens/solvers/">Solvers</a>
   ·
   <a href="https://github.com/mit-ll/pydgens">GitHub</a>
