@@ -1113,6 +1113,7 @@ dependencies = [
 dev = [
     { name = "line-profiler" },
     { name = "matplotlib" },
+    { name = "pillow" },
     { name = "pyinstrument" },
     { name = "pytest" },
     { name = "pytest-benchmark" },
@@ -1124,6 +1125,7 @@ dev = [
 full = [
     { name = "line-profiler" },
     { name = "matplotlib" },
+    { name = "pillow" },
     { name = "pyinstrument" },
     { name = "pytest" },
     { name = "pytest-benchmark" },
@@ -1140,6 +1142,7 @@ requires-dist = [
     { name = "line-profiler", marker = "extra == 'dev'" },
     { name = "matplotlib", marker = "extra == 'dev'" },
     { name = "numpy" },
+    { name = "pillow", marker = "extra == 'dev'" },
     { name = "pydgens", extras = ["dev"], marker = "extra == 'full'" },
     { name = "pyinstrument", marker = "extra == 'dev'" },
     { name = "pytest", marker = "extra == 'dev'" },
