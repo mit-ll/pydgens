@@ -64,6 +64,7 @@ dev = [
   "scalene",
   "tensorboard",
   "zensical",
+  "mkdocstrings-python",
   "matplotlib",
   "pillow",
 ]

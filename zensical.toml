@@ -10,11 +10,23 @@ nav = [
   { "Get started" = "index.md" },
   { "Examples" = "examples.md" },
   { "Solvers" = "solvers.md" },
+  { "API Reference" = "api.md" },
   { "Testing" = "testing.md" },
   { "Profiling" = "profile.md" },
   { "References" = "references.md" },
   { "License" = "license.md" },
 ]
+
+[project.plugins.mkdocstrings.handlers.python]
+paths = ["src"]
+
+[project.plugins.mkdocstrings.handlers.python.options]
+docstring_style = "numpy"
+filters = "public"
+members_order = "__all__"
+show_root_heading = true
+show_root_full_path = false
+show_source = false
 
 [project.theme]
 language = "en"
