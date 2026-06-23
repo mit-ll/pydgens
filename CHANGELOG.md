@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `README.md` adding example visuals
 - `examples/multi_car_intersection.py` frontend iLQ showcase example with bicycle-like car dynamics and soft intersection costs
 - `scripts/visuals/multi_car_intersection_gif.py` for generating animated GIFs of the multi-car intersection example
 

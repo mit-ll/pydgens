@@ -28,20 +28,100 @@ from pydgens.examples.multi_car_intersection import (
 CAR_COLORS = ("#2563eb", "#dc2626", "#16a34a", "#9333ea", "#ea580c", "#0891b2")
 
 
-def simulate_naive_rollout(game, x0, car_specs):
+def _xy_at(x, car_index: int):
+    s = car_state_slice(car_index)
+    return np.asarray(x[s.start:s.start + 2])
+
+
+def _set_car_state(x, car_index: int, car_state):
+    s = car_state_slice(car_index)
+    return x.at[s].set(car_state)
+
+
+def _collision_events(
+    x,
+    *,
+    num_cars: int,
+    collision_radius: float,
+    frozen: set[int],
+    recorded_pairs: set[tuple[int, int]],
+    frame: int,
+):
+    """
+    Return all newly detected collisions at a frame.
+    """
+    events = []
+
+    for i in range(num_cars):
+        xy_i = _xy_at(x, i)
+        for j in range(i + 1, num_cars):
+            pair = (i, j)
+            if pair in recorded_pairs:
+                continue
+
+            # If both cars were already stopped by earlier collisions, do not
+            # keep rediscovering a static contact pair.
+            if i in frozen and j in frozen:
+                continue
+
+            xy_j = _xy_at(x, j)
+            dist = float(np.linalg.norm(xy_i - xy_j))
+            if dist <= collision_radius:
+                events.append({
+                    "frame": frame,
+                    "pair": (i, j),
+                    "position": 0.5 * (xy_i + xy_j),
+                    "distance": dist,
+                })
+
+    return events
+
+
+def simulate_naive_rollout(game, x0, car_specs, *, collision_radius: float = 0.2):
     """
     Simulate the zero-control rollout for visual comparison.
+
+    If a pair enters ``collision_radius``, only the colliding cars freeze. The
+    remaining cars continue forward, so the animation can show multiple
+    collisions in one naive rollout.
     """
     x = jnp.asarray(x0)
     u = jnp.zeros((2 * len(car_specs),), dtype=x.dtype)
     xs = [x]
+    collisions = []
+    frozen = set()
+    recorded_pairs = set()
 
     for k in range(game.tg.nsteps):
         t = game.tg.t0 + k * game.tg.dt
-        x = x + game.tg.dt * game.dynamics.evaluate(t, x, u)
+        x_prev = x
+        x_next = x + game.tg.dt * game.dynamics.evaluate(t, x, u)
+
+        for car_index in frozen:
+            x_next = _set_car_state(
+                x_next,
+                car_index,
+                x_prev[car_state_slice(car_index)],
+            )
+
+        new_collisions = _collision_events(
+            x_next,
+            num_cars=len(car_specs),
+            collision_radius=collision_radius,
+            frozen=frozen,
+            recorded_pairs=recorded_pairs,
+            frame=k + 1,
+        )
+
+        for event in new_collisions:
+            collisions.append(event)
+            recorded_pairs.add(event["pair"])
+            frozen.update(event["pair"])
+
+        x = x_next
         xs.append(x)
 
-    return jnp.stack(xs, axis=0)
+    return jnp.stack(xs, axis=0), collisions
 
 
 def _xy_trajectory(states, car_index: int):
@@ -155,12 +235,48 @@ def _init_artists(ax, states, car_specs):
     return lines, bodies
 
 
+def _init_collision_artist(ax, collisions):
+    """
+    Create hidden collision marker/text artists for a panel.
+    """
+    if not collisions:
+        return None
+
+    marker = ax.scatter(
+        [],
+        [],
+        marker="x",
+        color="#ef4444",
+        s=180,
+        linewidths=3,
+        zorder=20,
+    )
+    text = ax.text(
+        0.03,
+        0.95,
+        "",
+        transform=ax.transAxes,
+        color="#ef4444",
+        fontsize=10,
+        fontweight="bold",
+        va="top",
+        bbox={
+            "boxstyle": "round,pad=0.25",
+            "facecolor": "white",
+            "edgecolor": "#ef4444",
+            "alpha": 0.9,
+        },
+    )
+    return marker, text
+
+
 def make_animation(
     *,
     solution_states,
     car_specs,
     output: Path,
     naive_states=None,
+    naive_collisions=None,
     fps: int = 10,
     dpi: int = 130,
 ):
@@ -175,15 +291,19 @@ def make_animation(
         axes = [axes]
         panel_states = [solution_states]
         titles = ["iLQ Feedback Nash Rollout"]
+        panel_collisions = [None]
     else:
         fig, axes = plt.subplots(1, 2, figsize=(12, 6), sharex=True, sharey=True)
         panel_states = [naive_states, solution_states]
         titles = ["Naive Zero-Control Rollout", "iLQ Feedback Nash Rollout"]
+        panel_collisions = [naive_collisions, None]
 
     artists = []
-    for ax, states, title in zip(axes, panel_states, titles):
+    collision_artists = []
+    for ax, states, title, collisions in zip(axes, panel_states, titles, panel_collisions):
         _setup_axis(ax, car_specs, title)
         artists.append(_init_artists(ax, states, car_specs))
+        collision_artists.append(_init_collision_artist(ax, collisions))
 
     frame_text = fig.text(0.5, 0.02, "", ha="center")
     fig.tight_layout(rect=(0.0, 0.04, 1.0, 1.0))
@@ -191,11 +311,37 @@ def make_animation(
     num_frames = solution_states.shape[0]
 
     def update(frame):
-        for states, (lines, bodies) in zip(panel_states, artists):
+        for states, (lines, bodies), collisions, collision_artist in zip(
+            panel_states,
+            artists,
+            panel_collisions,
+            collision_artists,
+        ):
             for i, (line, body) in enumerate(zip(lines, bodies)):
                 xy = _xy_trajectory(states, i)
                 line.set_data(xy[:frame + 1, 0], xy[:frame + 1, 1])
                 body.set_xy(_car_polygon(xy[frame], _heading(states, i, frame)))
+
+            if collision_artist is not None:
+                marker, text = collision_artist
+                visible_collisions = [
+                    collision
+                    for collision in collisions
+                    if frame >= collision["frame"]
+                ]
+                if visible_collisions:
+                    marker.set_offsets(np.asarray([
+                        collision["position"]
+                        for collision in visible_collisions
+                    ]))
+                    labels = []
+                    for collision in visible_collisions:
+                        i, j = collision["pair"]
+                        labels.append(f"{car_specs[i].name} + {car_specs[j].name}")
+                    text.set_text("collisions:\n" + "\n".join(labels))
+                else:
+                    marker.set_offsets(np.empty((0, 2)))
+                    text.set_text("")
 
         frame_text.set_text(f"step {frame:02d} / {num_frames - 1:02d}")
         return []
@@ -229,6 +375,12 @@ def parse_args():
         help="Render the zero-control rollout beside the iLQ rollout.",
     )
     parser.add_argument(
+        "--collision-radius",
+        type=float,
+        default=0.2,
+        help="Naive-rollout distance threshold used to mark and freeze collisions.",
+    )
+    parser.add_argument(
         "--fps",
         type=int,
         default=10,
@@ -247,15 +399,20 @@ def main() -> None:
     args = parse_args()
 
     game, x0, car_specs, _, solution = solve_example()
-    naive_states = (
-        simulate_naive_rollout(game, x0, car_specs)
-        if args.compare_naive
-        else None
-    )
+    naive_states = None
+    naive_collisions = None
+    if args.compare_naive:
+        naive_states, naive_collisions = simulate_naive_rollout(
+            game,
+            x0,
+            car_specs,
+            collision_radius=args.collision_radius,
+        )
 
     make_animation(
         solution_states=solution.states,
         naive_states=naive_states,
+        naive_collisions=naive_collisions,
         car_specs=car_specs,
         output=args.output,
         fps=args.fps,

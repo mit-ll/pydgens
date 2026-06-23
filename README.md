@@ -8,6 +8,17 @@ PYDGENS provides numerical solvers for approximating equilibrium solutions in mu
 
 PYDGENS is a pre-`1.0` release. The package is ready for early adopters, but the public API may continue to evolve as the modeling frontend, examples, and solver interfaces mature.
 
+<p align="center">
+  <img src="docs/assets/multi_car_intersection.gif" alt="Multi-car intersection game solved with PYDGENS" width="700">
+</p>
+
+<p align="center">
+  <em>Multi-car intersection game: naive rollout with collisions compared to an iLQ feedback solution.</em>
+  <br>
+  <a href="src/pydgens/examples/multi_car_intersection.py">View the example source</a> ·
+  <a href="https://mit-ll.github.io/pydgens/examples/#multi-car-intersection">Read the example docs</a>
+</p>
+
 ## Installation
 
 ```bash
