@@ -6,14 +6,14 @@
 
 __version__ = "0.6.2"
 
-# User-facing semantic modeling APIs
+# Frontend submodules exposed for discoverability.
 from pydgens.frontend import dynamics
 from pydgens.frontend import costs
 from pydgens.frontend import players
 from pydgens.frontend import games
 from pydgens.frontend import constraints
 
-# Convenience constructors for common workflows
+# Preferred top-level constructors for common workflows.
 from pydgens.ir.timetypes import time_grid
 from pydgens.frontend.dynamics import linear_dynamics
 from pydgens.frontend.dynamics import nonlinear_dynamics

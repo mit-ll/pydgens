@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scripts/visuals/multi_car_intersection_gif.py` for generating animated GIFs of the multi-car intersection example
 - `scripts/visuals/satellite_lady_bandit_guard_gif.py` for generating Monte Carlo feedback rollout GIFs of the orbital LBG example
 - `frontend/costs.py` matrix-based quadratic cost helper for advanced LQ games with coupled state costs
+- `frontend/__init__.py` curated frontend namespace matching the top-level constructor API
 - `pillow` to optional dependencies for GIF rendering from `scripts/visuals`
 
 ### Changed
