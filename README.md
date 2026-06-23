@@ -8,16 +8,35 @@ PYDGENS provides numerical solvers for approximating equilibrium solutions in mu
 
 PYDGENS is a pre-`1.0` release. The package is ready for early adopters, but the public API may continue to evolve as the modeling frontend, examples, and solver interfaces mature.
 
-<p align="center">
-  <img src="docs/assets/multi_car_intersection.gif" alt="Multi-car intersection game solved with PYDGENS" width="700">
-</p>
-
-<p align="center">
-  <em>Multi-car intersection game: naive rollout with collisions compared to an iLQ feedback solution.</em>
-  <br>
-  <a href="src/pydgens/examples/multi_car_intersection.py">View the example source</a> ·
-  <a href="https://mit-ll.github.io/pydgens/examples/#multi-car-intersection">Read the example docs</a>
-</p>
+<table>
+  <tr>
+    <td width="72%">
+      <img src="docs/assets/multi_car_intersection.gif" alt="Multi-car intersection game solved with PYDGENS" width="100%">
+    </td>
+    <td width="28%">
+      <strong>Multi-car intersection</strong>
+      <br><br>
+      Naive collisions compared to an iLQ feedback solution.
+      <br><br>
+      <a href="src/pydgens/examples/multi_car_intersection.py">Source</a> ·
+      <a href="https://mit-ll.github.io/pydgens/examples/#multi-car-intersection">Docs</a>
+    </td>
+  </tr>
+  <tr>
+    <td width="72%">
+      <img src="docs/assets/satellite_lady_bandit_guard.gif" alt="Satellite Lady-Bandit-Guard game solved with PYDGENS" width="100%">
+    </td>
+    <td width="28%">
+      <strong>Satellite Lady-Bandit-Guard</strong>
+      <br><br>
+      One LQ feedback Nash strategy rolled out from many initial states.
+      <br><br>
+      <a href="src/pydgens/examples/satellite_lady_bandit_guard.py">Source</a> ·
+      <a href="https://mit-ll.github.io/pydgens/examples/#satellite-lady-bandit-guard">Docs</a> ·
+      <a href="https://github.com/mit-ll/spacegym-kspdg">spacegym-kspdg</a>
+    </td>
+  </tr>
+</table>
 
 ## Installation
 

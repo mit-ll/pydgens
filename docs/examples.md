@@ -11,6 +11,7 @@ Examples live in [`src/pydgens/examples/`](../src/pydgens/examples/). These scri
 | Example | Command | Solve Path | Interface | Notes |
 | --- | --- | --- | --- | --- |
 | [Tug-of-War](../src/pydgens/examples/tug_o_war.py) | `python -m pydgens.examples.tug_o_war` | `LQ` -> feedback Nash equilibrium | Top-level API | Smallest LQ walkthrough; includes analytical comparison. |
+| [Satellite Lady-Bandit-Guard](../src/pydgens/examples/satellite_lady_bandit_guard.py) | `python -m pydgens.examples.satellite_lady_bandit_guard` | `LQ` -> feedback Nash equilibrium | Top-level API | Showcase orbital LQ example with Clohessy-Wiltshire dynamics and coupled quadratic costs; related to [`spacegym-kspdg`](https://github.com/mit-ll/spacegym-kspdg). |
 | [Two-Player Unicycle](../src/pydgens/examples/unicycle.py) | `python -m pydgens.examples.unicycle` | `iLQ` -> local feedback Nash equilibrium | Top-level API | Beginner nonlinear example using the semantic frontend. |
 | [Multi-Car Intersection](../src/pydgens/examples/multi_car_intersection.py) | `python -m pydgens.examples.multi_car_intersection` | `iLQ` -> local feedback Nash equilibrium | Top-level API | Showcase nonlinear example with soft collision, lane, and speed penalties. |
 | [Constrained Integrators](../src/pydgens/examples/constrained_integrators.py) | `python -m pydgens.examples.constrained_integrators` | `AL` -> local open-loop Nash equilibrium | Top-level API | Beginner constrained example using the frontend API. |
@@ -30,6 +31,24 @@ Compute a feedback Nash equilibrium for a simple linear-quadratic game with the 
 
 ```bash
 python -m pydgens.examples.tug_o_war
+```
+
+## Satellite Lady-Bandit-Guard
+
+Source: [`src/pydgens/examples/satellite_lady_bandit_guard.py`](../src/pydgens/examples/satellite_lady_bandit_guard.py)
+
+Run a linear-quadratic orbital Lady-Bandit-Guard game where bandit and guard satellites move under Clohessy-Wiltshire dynamics relative to a passive lady/reference orbit:
+
+```bash
+python -m pydgens.examples.satellite_lady_bandit_guard
+```
+
+This simplified LQ example is closely related to the orbital pursuit-evasion-protection setting in [`mit-ll/spacegym-kspdg`](https://github.com/mit-ll/spacegym-kspdg), a separate public competition environment.
+
+Optional visualization script:
+
+```bash
+python scripts/visuals/satellite_lady_bandit_guard_gif.py  --samples 32  --position-sigma 4.0 --z-position-sigma 0.1 --nt 101 --output docs/assets/satellite_lady_bandit_guard.gif
 ```
 
 ## Two-Player Unicycle

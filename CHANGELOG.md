@@ -10,13 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `README.md` adding example visuals
+- `README.md` and `examples.md` linking the satellite LBG example to the related `spacegym-kspdg` competition environment
 - `examples/multi_car_intersection.py` frontend iLQ showcase example with bicycle-like car dynamics and soft intersection costs
+- `examples/satellite_lady_bandit_guard.py` frontend LQ showcase example with Clohessy-Wiltshire orbital dynamics
 - `scripts/visuals/multi_car_intersection_gif.py` for generating animated GIFs of the multi-car intersection example
+- `scripts/visuals/satellite_lady_bandit_guard_gif.py` for generating Monte Carlo feedback rollout GIFs of the orbital LBG example
+- `frontend/costs.py` matrix-based quadratic cost helper for advanced LQ games with coupled state costs
+- `pillow` to optional dependencies for GIF rendering from `scripts/visuals`
 
 ### Changed
 
 - `examples.md` adding links to source code and reformatting table
 - `examples/multi_car_intersection.py` now warm-starts iLQ with a staggered lane-following initial strategy
+- `QuadraticPlayerCost` matrix property setters now provide the canonical validation path for full state/control matrices
 
 ## [v0.6.2] - 2026.06.17
 
