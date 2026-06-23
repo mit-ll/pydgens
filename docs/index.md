@@ -24,6 +24,8 @@ PYDGENS currently supports three main solver paths:
 - `iLQ`: nonlinear, unconstrained games solved for local feedback Nash strategies
 - `AL`: constrained nonlinear games solved with an augmented-Lagrangian workflow for local open-loop trajectories
 
+See [Solvers](solvers.md) for a sparse theory map and references.
+
 ## Quick Start
 
 Run a minimal linear-quadratic example:

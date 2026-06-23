@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `README.md` adding example visuals
 - `README.md` and `examples.md` linking the satellite LBG example to the related `spacegym-kspdg` competition environment
+- `README.md` adding a minimal frontend API snippet for defining and solving an iLQ game
+- `README.md` replacing the standalone documentation section with compact top-level navigation links
+- `docs/solvers.md` sparse solver theory/reference scaffold
+- `docs/references.md` expanded into a citeable reference index for solver documentation
 - `examples/multi_car_intersection.py` frontend iLQ showcase example with bicycle-like car dynamics and soft intersection costs
 - `examples/satellite_lady_bandit_guard.py` frontend LQ showcase example with Clohessy-Wiltshire orbital dynamics
 - `scripts/visuals/multi_car_intersection_gif.py` for generating animated GIFs of the multi-car intersection example

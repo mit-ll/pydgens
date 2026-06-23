@@ -9,6 +9,7 @@ Copyright &copy; 2026 Massachusetts Institute of Technology
 nav = [
   { "Get started" = "index.md" },
   { "Examples" = "examples.md" },
+  { "Solvers" = "solvers.md" },
   { "Testing" = "testing.md" },
   { "Profiling" = "profile.md" },
   { "References" = "references.md" },

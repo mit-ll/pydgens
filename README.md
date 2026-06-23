@@ -4,6 +4,16 @@
   <img src="docs/assets/pydgens-logo.png" alt="PYDGENS logo" width="300">
 </p>
 
+<h3 align="center">
+  <a href="https://mit-ll.github.io/pydgens/">Documentation</a>
+  ·
+  <a href="https://mit-ll.github.io/pydgens/examples/">Examples</a>
+  ·
+  <a href="https://mit-ll.github.io/pydgens/solvers/">Solvers</a>
+  ·
+  <a href="https://github.com/mit-ll/pydgens">GitHub</a>
+</h3>
+
 PYDGENS provides numerical solvers for approximating equilibrium solutions in multi-player, general-sum dynamic and differential games. The package currently focuses on linear-quadratic feedback Nash games, iterative linear-quadratic methods for nonlinear games, and augmented-Lagrangian workflows for constrained games.
 
 PYDGENS is a pre-`1.0` release. The package is ready for early adopters, but the public API may continue to evolve as the modeling frontend, examples, and solver interfaces mature.
@@ -48,66 +58,68 @@ PYDGENS requires Python `3.12` or newer.
 
 ## Solvers
 
-PYDGENS currently supports three main solver paths:
+PYDGENS currently supports three main solver paths. See the [solver notes](https://mit-ll.github.io/pydgens/solvers/) for a sparse theory map and references.
 
-- LQ: linear-quadratic, unconstrained games solved for feedback Nash strategies
-- iLQ: nonlinear, unconstrained games solved for local feedback Nash strategies
-- AL: constrained nonlinear games solved with an augmented-Lagrangian workflow for local open-loop trajectories (_pre-release, beta version_)
+| Solver | Use case | Equilibrium style |
+| --- | --- | --- |
+| `LQ` | Linear dynamics with quadratic costs | feedback Nash |
+| `iLQ` | Nonlinear unconstrained games | local feedback Nash |
+| `AL` | Constrained nonlinear games | local open-loop Nash (_pre-release, beta_) |
 
-## Examples
+## Usage Example
 
-Run a minimal linear-quadratic tug-of-war game solved with the LQ solver:
+Define and solve for the local Nash equilibrium of a nonlinear game by combining a time grid, dynamics, player costs, and player-owned control slices:
 
-```bash
-python -m pydgens.examples.tug_o_war
+```python
+import jax.numpy as jnp
+import pydgens as pdg
+
+x0 = jnp.array([4.0, 4.0, 0.0, 0.0])  # px, py, heading, speed
+
+game = pdg.game(
+    tg=pdg.time_grid(nt=34, dt=0.1),
+    dynamics=pdg.nonlinear_dynamics(
+        nx=4,
+        nu=2,
+        dynamics=lambda t, x, u: jnp.array([
+            x[3] * jnp.cos(x[2]),
+            x[3] * jnp.sin(x[2]),
+            u[0],
+            u[1],
+        ]),
+    ),
+    players=[
+        pdg.player(
+            name="turn",
+            joint_ctrl_slice=slice(0, 1),
+            cost=pdg.player_cost(
+                running=lambda t, x, u: x[0] ** 2 + x[1] ** 2 + u[0] ** 2,
+            ),
+        ),
+        pdg.player(
+            name="speed",
+            joint_ctrl_slice=slice(1, 2),
+            cost=pdg.player_cost(
+                running=lambda t, x, u: (x[3] - 1.0) ** 2 + u[1] ** 2,
+            ),
+        ),
+    ],
+)
+
+solution = pdg.solve(game, x0=x0, method="ilq")
+print(solution)
 ```
 
-Run a nonlinear two-player unicycle game solved with the iterative LQ solver:
+Further examples of solving for equilibria in differential games can be run directly with:
 
 ```bash
-python -m pydgens.examples.unicycle
+python -m pydgens.examples.tug_o_war  # minimal linear-quadratic (LQ) game
+python -m pydgens.examples.unicycle   # nonlinear game solved with iterative method
+python -m pydgens.examples.constrained_integrators  # constrained game solved Lagrangian method
 ```
 
-Run a constrained two-player integrator game solved with the augmented-Lagrangian solver:
+A comprehensive list of examples is included in the [examples documentation](https://mit-ll.github.io/pydgens/examples/).
 
-```bash
-python -m pydgens.examples.constrained_integrators
-```
-
-More examples, including advanced examples that make use of the intermediate representations (IR), are listed in the [examples documentation](https://mit-ll.github.io/pydgens/examples/).
-
-## Documentation
-
-Documentation is available at <https://mit-ll.github.io/pydgens/>.
-
-## Development
-
-For development from a local clone:
-
-```bash
-pip install -e .[full]
-```
-
-Contributors can also use `uv` for a reproducible environment:
-
-```bash
-uv sync --extra dev
-source .venv/bin/activate
-```
-
-## Testing
-
-Quick tests:
-
-```bash
-pytest tests/ -v -s -m "not slow"
-```
-
-Slow and benchmark-oriented tests:
-
-```bash
-pytest tests/ -v -m "slow" --benchmark-columns='mean, min, max, stddev, rounds'
-```
 
 ## Disclaimer
 
