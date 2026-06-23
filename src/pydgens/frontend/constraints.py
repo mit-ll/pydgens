@@ -27,10 +27,11 @@ def control_bounds(
     """
     Create path-wise bounds on the joint control vector.
 
-    This is the beginner-facing way to express common control limits such as
+    Bounds may apply to selected joint-control dimensions and selected
+    control intervals. For example, this can express constraints such as:
 
-        -1 <= u[0] <= 1
-        -2 <= u[1] <= 2
+        ``-1 <= u[0] <= 1``
+        ``-2 <= u[1] <= 2``
 
     over some or all control intervals.
 
@@ -51,6 +52,12 @@ def control_bounds(
     steps:
         Optional control-interval indices where the bounds are active. If
         omitted, the bounds apply on all control intervals.
+
+    Returns
+    -------
+    ControlBounds
+        Frontend control-bound specification suitable for
+        ``constraint_set(...)``.
     """
     return ControlBounds(
         lower=lower,
@@ -71,10 +78,11 @@ def state_bounds(
     """
     Create bounds on the joint state vector.
 
-    This is the beginner-facing way to express common path-state limits such as
+    Bounds may apply to selected joint-state dimensions and selected path
+    intervals. For example, this can express constraints such as:
 
-        px >= 0
-        -5 <= v <= 5
+        ``px >= 0``
+        ``-5 <= v <= 5``
 
     with the option to also enforce the same bound at the terminal state.
 
@@ -99,6 +107,12 @@ def state_bounds(
 
     include_terminal:
         Whether the same bounds should also be enforced at the terminal node.
+
+    Returns
+    -------
+    StateBounds
+        Frontend state-bound specification suitable for
+        ``constraint_set(...)``.
     """
     return StateBounds(
         lower=lower,
@@ -115,9 +129,20 @@ def constraint_set(
     """
     Bundle frontend constraint specifications into a single set.
 
+    Parameters
+    ----------
+    *items:
+        Constraint specifications such as ``control_bounds(...)`` or
+        ``state_bounds(...)``.
+
+    Returns
+    -------
+    ConstraintSet
+        Frontend constraint collection that can be passed to ``game(...)``.
+
     Examples
     --------
-    >>> cons = constraints(
+    >>> cons = constraint_set(
     ...     control_bounds(lower=-1.0, upper=1.0, indices=[0]),
     ...     state_bounds(lower=0.0, indices=[1]),
     ... )

@@ -1,3 +1,11 @@
+"""Public API for PYDGENS.
+
+The top-level namespace provides the preferred constructors for common
+modeling and solving workflows. Lower-level namespaces such as
+``pydgens.frontend`` remain available when users want to organize imports by
+API layer.
+"""
+
 # Copyright 2026 MIT Lincoln Laboratory
 # SPDX-License-Identifier: MIT
 

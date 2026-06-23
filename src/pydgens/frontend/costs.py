@@ -23,22 +23,25 @@ def player_cost(
     """
     Create a continuous-time player cost from user-provided callables.
 
-    This is the generic beginner-facing frontend cost factory for
-    nonlinear games. It stores Python callables describing a player's
-    objective in continuous time, while hiding the lower-level IR cost
-    dataclass from the public modeling workflow.
+    Use this factory for nonlinear games when a player's running and
+    terminal costs are easiest to express as Python callables. The returned
+    object stores those callables in frontend form and lowers them to solver
+    IR when a game is solved.
 
     Parameters
     ----------
     running:
-        Running cost callable of the form
+        Running cost callable of the form:
 
-            running(t, x, u_joint) -> scalar
+            ``running(t, x, u_joint) -> scalar``
+
+        The callable receives scalar time ``t``, joint state ``x``, and the
+        full joint control vector ``u_joint``.
 
     terminal:
-        Optional terminal cost callable of the form
+        Optional terminal cost callable of the form:
 
-            terminal(t, x) -> scalar
+            ``terminal(t, x) -> scalar``
 
     Returns
     -------
@@ -77,25 +80,18 @@ def quadratic_cost(
     """
     Create a quadratic player cost using semantic frontend arguments.
 
-    This factory is the beginner-facing way to define quadratic running
-    costs over the joint state and joint control spaces. It wraps
-    ``QuadraticPlayerCost`` while exposing a more tutorial-friendly API
-    based on:
+    This factory defines diagonal quadratic running and terminal costs over
+    the joint state and joint control spaces. It is the recommended entry
+    point for linear-quadratic games whose penalties can be described by
+    nonnegative scalar weights.
 
-    - which state dimensions are penalized
-    - which control dimensions are penalized
-    - what state target is desired
-    - what control target is desired
+    Conceptually, the returned cost represents:
 
-    Conceptually, the returned cost represents
+        ``(x - x_ref)^T Qp (x - x_ref)``
+        ``+ (u - u_ref)^T Rp (u - u_ref)``
+        ``+ (x_T - x_ref_terminal)^T Qp_terminal (x_T - x_ref_terminal)``
 
-        (x - x_ref)^T Qp (x - x_ref)
-        +
-        (u - u_ref)^T Rp (u - u_ref)
-        +
-        (x_T - x_ref_terminal)^T Qp_terminal (x_T - x_ref_terminal)
-
-    where ``Qp`` and ``Rp`` are diagonal frontend penalty matrices built
+    where ``Qp``, ``Rp``, and ``Qp_terminal`` are diagonal matrices built
     from the provided weights.
 
     Parameters
@@ -107,7 +103,8 @@ def quadratic_cost(
         Joint control dimension.
 
     state_weights:
-        Optional nonnegative weights for quadratic state penalties.
+        Optional nonnegative weights for quadratic state penalties. If
+        ``state_indices`` is omitted, this must have length ``nx``.
 
     state_indices:
         Optional joint-state indices to penalize. If omitted, the state
@@ -118,6 +115,8 @@ def quadratic_cost(
 
     terminal_state_weights:
         Optional nonnegative weights for terminal quadratic state penalties.
+        If ``terminal_state_indices`` is omitted, this must have length
+        ``nx``.
 
     terminal_state_indices:
         Optional joint-state indices to penalize at the terminal state. If
@@ -127,7 +126,8 @@ def quadratic_cost(
         Optional desired terminal joint-state reference ``x_ref_terminal``.
 
     control_weights:
-        Optional nonnegative weights for quadratic control penalties.
+        Optional nonnegative weights for quadratic control penalties. If
+        ``control_indices`` is omitted, this must have length ``nu``.
 
     control_indices:
         Optional joint-control indices to penalize. If omitted, the
@@ -140,7 +140,6 @@ def quadratic_cost(
     -------
     QuadraticPlayerCost
         Configured quadratic player cost object.
-
     """
 
     cost = QuadraticPlayerCost(
@@ -216,6 +215,42 @@ def matrix_quadratic_cost(
     indefinite state rewards/penalties. The simpler ``quadratic_cost(...)``
     remains the recommended beginner-facing factory for diagonal,
     nonnegative weights.
+
+    Parameters
+    ----------
+    nx:
+        Joint state dimension. Must be positive.
+
+    nu:
+        Joint control dimension. Must be positive.
+
+    state_matrix:
+        Optional joint-state running cost matrix with shape ``(nx, nx)``.
+        The matrix must be symmetric and may be indefinite when supported by
+        the downstream solver.
+
+    state_target:
+        Optional desired joint-state reference with shape ``(nx,)``.
+
+    terminal_state_matrix:
+        Optional joint-state terminal cost matrix with shape ``(nx, nx)``.
+        The matrix must be symmetric and may be indefinite when supported by
+        the downstream solver.
+
+    terminal_state_target:
+        Optional desired terminal joint-state reference with shape ``(nx,)``.
+
+    control_matrix:
+        Optional joint-control running cost matrix with shape ``(nu, nu)``.
+        The matrix must be symmetric positive semidefinite.
+
+    control_target:
+        Optional desired joint-control reference with shape ``(nu,)``.
+
+    Returns
+    -------
+    QuadraticPlayerCost
+        Configured quadratic player cost object.
     """
     cost = QuadraticPlayerCost(
         nx=nx,

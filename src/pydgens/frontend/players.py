@@ -28,9 +28,10 @@ def player(
     """
     Create a frontend player object from semantic inputs.
 
-    This factory is the beginner-facing entry point for defining players.
-    It chooses the most specific known frontend player type that matches
-    the supplied cost object.
+    A player owns a contiguous slice of the joint control vector and carries
+    the cost model used to evaluate that player's objective. This factory
+    chooses the most specific known frontend player type compatible with the
+    supplied cost object.
 
     Current dispatch rules
     ----------------------
@@ -40,17 +41,21 @@ def player(
     Parameters
     ----------
     cost:
-        Player-specific frontend cost model.
+        Player-specific frontend cost model created by ``player_cost(...)``,
+        ``quadratic_cost(...)``, or another frontend cost factory.
 
     joint_ctrl_slice:
         Contiguous block of the joint control vector owned by this player.
+        This may be a ``slice(start, stop)`` or a length-2 sequence such as
+        ``(start, stop)``.
 
     name:
         Optional player name used for diagnostics and solution access.
 
     state_view:
         Optional joint-state indices associated with this player for
-        plotting and diagnostics.
+        plotting and diagnostics. This is metadata only; it does not imply
+        state ownership.
 
     Returns
     -------

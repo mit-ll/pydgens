@@ -48,9 +48,10 @@ def game(
     """
     Create a frontend game object from semantic modeling inputs.
 
-    This is the beginner-facing entry point for constructing games. It
-    chooses the most specific known frontend game type compatible with the
-    supplied dynamics and player objects.
+    A game combines a time grid, dynamics, players, and optional constraints
+    into the semantic object consumed by ``solve(...)``. This factory chooses
+    the most specific known frontend game type compatible with the supplied
+    modeling ingredients.
 
     Current dispatch rules
     ----------------------
@@ -63,13 +64,17 @@ def game(
     Parameters
     ----------
     tg:
-        Time grid used to sample the game.
+        Time grid used to sample the game, usually created by
+        ``time_grid(...)``.
 
     dynamics:
-        Frontend dynamics object.
+        Frontend dynamics object created by ``linear_dynamics(...)`` or
+        ``nonlinear_dynamics(...)``.
 
     players:
-        Sequence of frontend player objects.
+        Sequence of frontend player objects created by ``player(...)``.
+        Player control slices must be contiguous, ordered, and cover the full
+        joint control vector.
 
     constraints:
         Optional frontend constraint set. Supplying constraints currently
@@ -82,8 +87,8 @@ def game(
     Returns
     -------
     object
-        The most specific known frontend game object compatible with the
-        supplied inputs.
+        Frontend game object compatible with the supplied inputs and suitable
+        for ``solve(...)``.
 
     Notes
     -----

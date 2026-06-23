@@ -175,9 +175,9 @@ def solve(
     """
     Solve a frontend or IR game object using the appropriate solver family.
 
-    This is the intended beginner-facing solver entry point. It accepts a
-    semantic frontend game when available, lowers to solver IR when needed,
-    chooses a solver family, and returns a small normalized solution bundle.
+    This is the primary solver entry point for user-facing workflows. It
+    accepts a semantic frontend game, lowers it to solver IR when needed,
+    chooses a solver family, and returns a normalized solution bundle.
 
     Current dispatch rules
     ----------------------
@@ -195,7 +195,7 @@ def solve(
         Optional initial joint state. This is required for iLQ solves, and
         for AL solves unless the caller provides ``op0`` directly. For LQ,
         this is optional; if provided, the frontend will propagate the
-        returned feedback strategy to produce a trajectory.
+        returned feedback strategy from ``x0`` to produce a trajectory.
 
     method:
         Solver family selection. ``"auto"`` infers the method from the game
@@ -208,7 +208,8 @@ def solve(
         Optional initial augmented Lagrangian state for the AL solver.
 
     **solver_kwargs:
-        Additional keyword arguments forwarded to the selected low-level solver.
+        Additional keyword arguments forwarded to the selected low-level
+        solver implementation.
 
     Returns
     -------
@@ -217,7 +218,7 @@ def solve(
 
     Notes
     -----
-    This frontend wrapper is intentionally lightweight. It focuses on:
+    This wrapper focuses on:
 
     - method dispatch
     - lowering frontend games to IR when needed
@@ -235,10 +236,9 @@ def solve(
       are expressed in each player's LOCAL control variables and are
       ``LOCAL_ONLY`` by control structure.
 
-    It does not yet attempt to provide a polished high-level solution API
-    for named player controls, plotting hooks, rich diagnostics, or solver
-    logs. Those can be layered on top later without changing the basic
-    dispatch contract.
+    Higher-level conveniences such as named player-control access, plotting
+    hooks, and richer solver logs can be layered on top of this normalized
+    result without changing the basic dispatch contract.
     """
 
     resolved_method = _resolve_solve_method(

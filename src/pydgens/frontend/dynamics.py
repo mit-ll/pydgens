@@ -22,25 +22,25 @@ def linear_dynamics(
     """
     Create continuous-time linear dynamics for a dynamic game.
 
-    The dynamics are
+    The dynamics are defined in joint state and joint control coordinates:
 
-        dx/dt = A x + B u
-
-    in the joint state and joint control coordinates.
+        ``dx/dt = A x + B u``
 
     Parameters
     ----------
     A:
-        State matrix with shape ``(nx, nx)``.
+        State matrix with shape ``(nx, nx)``, where ``nx`` is the joint
+        state dimension.
 
     B:
-        Control matrix with shape ``(nx, nu)``.
+        Control matrix with shape ``(nx, nu)``, where ``nu`` is the joint
+        control dimension.
 
     Returns
     -------
-    LinearTimeInvariantContinuousSystem
-        Continuous-time linear system with time-invariant dynamics, 
-        with inferred state and control dimensions.
+    LTIContinuousSystem
+        Continuous-time linear time-invariant system with inferred joint
+        state and control dimensions.
 
     Examples
     --------
@@ -70,27 +70,28 @@ def nonlinear_dynamics(
     """
     Create continuous-time nonlinear dynamics for a dynamic game.
 
-    The beginner-facing nonlinear frontend expects a dynamics function of
-    the form
+    The dynamics callable is defined in joint state and joint control
+    coordinates:
 
-        dx/dt = f(t, x, u)
-
-    in the joint state and joint control coordinates.
+        ``dx/dt = f(t, x, u)``
 
     Parameters
     ----------
     nx:
-        Joint state dimension.
+        Joint state dimension. Must be positive.
 
     nu:
-        Joint control dimension.
+        Joint control dimension. Must be positive.
 
     dynamics:
         Callable of the form ``dynamics(t, x, u) -> dxdt``.
 
-        The returned derivative must have shape ``(nx,)``. Time invariance
-        is not assumed at the frontend layer, which keeps this interface
-        aligned with common ODE-solver conventions.
+        The callable receives scalar time ``t``, joint state ``x`` with
+        shape ``(nx,)``, and joint control ``u`` with shape ``(nu,)``. It
+        must return the state derivative with shape ``(nx,)``.
+
+        Time invariance is not assumed at the frontend layer, which keeps
+        this interface aligned with common ODE-solver conventions.
 
     Returns
     -------
