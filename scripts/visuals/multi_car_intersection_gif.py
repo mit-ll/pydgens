@@ -19,11 +19,9 @@ import numpy as np
 from matplotlib.animation import FuncAnimation, PillowWriter
 from matplotlib.patches import Polygon
 
-import pydgens as pdg
 from pydgens.examples.multi_car_intersection import (
-    build_multi_car_intersection_game,
     car_state_slice,
-    default_car_specs,
+    solve_example,
 )
 
 
@@ -44,22 +42,6 @@ def simulate_naive_rollout(game, x0, car_specs):
         xs.append(x)
 
     return jnp.stack(xs, axis=0)
-
-
-def solve_intersection():
-    """
-    Solve the default frontend intersection game.
-    """
-    game, x0, car_specs, _ = build_multi_car_intersection_game(
-        car_specs=default_car_specs(),
-    )
-    solution = pdg.solve(
-        game,
-        x0=x0,
-        method="ilq",
-        max_iters=100,
-    )
-    return game, x0, car_specs, solution
 
 
 def _xy_trajectory(states, car_index: int):
@@ -264,7 +246,7 @@ def parse_args():
 def main() -> None:
     args = parse_args()
 
-    game, x0, car_specs, solution = solve_intersection()
+    game, x0, car_specs, _, solution = solve_example()
     naive_states = (
         simulate_naive_rollout(game, x0, car_specs)
         if args.compare_naive

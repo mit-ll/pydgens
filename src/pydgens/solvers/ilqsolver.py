@@ -281,7 +281,7 @@ def solve_ilqgame_feedback(
         # logger.debug(f"iter {iteration}: nl_strat = \n{curr_strat}")
 
         if not success:
-            logger.warning("Backtracking failed: exiting early.")
+            logger.warning(f"Backtracking failed at iteration {iteration}: exiting early.")
             return False, curr_traj, curr_strat
 
         # Step 6: Check for convergence

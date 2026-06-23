@@ -38,11 +38,13 @@ from typing import Sequence
 import jax.numpy as jnp
 
 import pydgens as pdg
+from pydgens.ir.strategytypes import FixedStepAffineStrategies
+from pydgens.ir.systemtypes import propagate_system_trajectory
 
 NX_CAR = 4  # state dimensions per car (player)
 NU_CAR = 2  # control dimensions per car (player)
 
-DEFAULT_NT = 51
+DEFAULT_NT = 61
 DEFAULT_DT = 0.1
 
 @dataclass(frozen=True)
@@ -304,15 +306,156 @@ def min_pairwise_distance(states, num_cars: int) -> float:
     return float(min_dist)
 
 
-def main() -> None:
+def _wrap_angle(angle):
+    return (angle + jnp.pi) % (2 * jnp.pi) - jnp.pi
+
+
+def default_yield_delays(car_specs: Sequence[CarSpec]) -> jnp.ndarray:
+    """
+    Stagger the default crossing order for the initial iLQ seed.
+
+    These delays are only used to build a warm-start trajectory/strategy. The
+    game itself still decides the final coupled behavior through iLQ.
+    """
+    delay_by_name = {
+        "eastbound": 0.0,
+        "westbound": 0.8,
+        "northbound": 1.6,
+        "southbound": 2.4,
+    }
+    return jnp.asarray([
+        delay_by_name.get(spec.name, 0.6 * i)
+        for i, spec in enumerate(car_specs)
+    ])
+
+
+def initial_intersection_strategy(
+    game,
+    x0,
+    car_specs: Sequence[CarSpec],
+    *,
+    yield_delays=None,
+    hold_speed_fraction: float = 0.35,
+    release_smoothing: float = 0.35,
+    speed_gain: float = 1.5,
+    heading_gain: float = 0.6,
+    lateral_gain: float = 0.08,
+    max_steering: float = 0.35,
+    max_accel: float = 3.0,
+):
+    """
+    Build a simple lane-following, staggered-crossing warm start for iLQ.
+
+    The returned affine strategy is intentionally feedforward-only: ``P=0``.
+    Its ``alpha`` term encodes a time-varying open-loop control sequence that
+    keeps cars roughly on their lanes and delays some cars before they enter
+    the intersection. This gives iLQ a plausible operating trajectory before it
+    starts optimizing the coupled game.
+
+    Returns
+    -------
+    tuple
+        ``(init_traj, init_strat)`` suitable for ``pdg.solve(..., method="ilq")``.
+    """
+    car_specs = tuple(car_specs)
+    if yield_delays is None:
+        yield_delays = default_yield_delays(car_specs)
+    yield_delays = jnp.asarray(yield_delays)
+
+    num_cars = len(car_specs)
+    nu = NU_CAR * num_cars
+    nx = NX_CAR * num_cars
+
+    x = jnp.asarray(x0)
+    us = []
+
+    for k in range(game.tg.nsteps):
+        t = game.tg.t0 + k * game.tg.dt
+        u = jnp.zeros((nu,), dtype=x.dtype)
+
+        for i, spec in enumerate(car_specs):
+            s = car_state_slice(i)
+            c = car_control_slice(i)
+            xi = x[s]
+            px, py, theta, speed = xi
+
+            heading_error = _wrap_angle(spec.lane_heading - theta)
+            lateral_error = _lane_lateral_error(px, py, spec)
+            steering = heading_gain * heading_error - lateral_gain * lateral_error
+            steering = jnp.clip(steering, -max_steering, max_steering)
+
+            if yield_delays[i] <= 0.0:
+                desired_speed = spec.nominal_speed
+            else:
+                released = 1.0 / (
+                    1.0
+                    +
+                    jnp.exp(-(t - yield_delays[i]) / release_smoothing)
+                )
+                hold_speed = hold_speed_fraction * spec.nominal_speed
+                desired_speed = hold_speed + released * (spec.nominal_speed - hold_speed)
+
+            accel = speed_gain * (desired_speed - speed)
+            accel = jnp.clip(accel, -max_accel, max_accel)
+
+            u = u.at[c].set(jnp.asarray([steering, accel]))
+
+        us.append(u)
+        x = x + game.tg.dt * game.dynamics.evaluate(t, x, u)
+
+    us = jnp.stack(us, axis=0)
+
+    # Solver convention: u[k] = -P[k] @ x[k] - alpha[k].
+    init_strat = FixedStepAffineStrategies(
+        tg=game.tg,
+        P=jnp.zeros((game.tg.nsteps, nu, nx)),
+        alpha=-us,
+    )
+
+    init_traj = propagate_system_trajectory(
+        game.to_ir().cs,
+        x0=jnp.asarray(x0),
+        strategy=init_strat,
+    )
+
+    return init_traj, init_strat
+
+
+def solve_example(
+    *,
+    use_initial_guess: bool = True,
+):
+    """
+    Build and solve the multi-car intersection example.
+    """
     game, x0, car_specs, players = build_multi_car_intersection_game()
+
+    solver_kwargs = {
+        "max_iters": 100,
+        "backtrack_max_iters": 50,
+    }
+
+    if use_initial_guess:
+        init_traj, init_strat = initial_intersection_strategy(
+            game,
+            x0,
+            car_specs,
+        )
+        solver_kwargs["init_traj"] = init_traj
+        solver_kwargs["init_strat"] = init_strat
 
     solution = pdg.solve(
         game,
         x0=x0,
         method="ilq",
-        max_iters=100,
+        **solver_kwargs,
     )
+
+    return game, x0, car_specs, players, solution
+
+
+def main() -> None:
+    game, x0, car_specs, players, solution = solve_example()
 
     states = solution.states
     joint_controls = solution.joint_controls
