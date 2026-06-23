@@ -12,7 +12,7 @@ API layer.
 # Single-sourcing package version
 # https://packaging.python.org/guides/single-sourcing-package-version/
 
-__version__ = "0.6.2"
+__version__ = "1.0.0"
 
 # Frontend submodules exposed for discoverability.
 from pydgens.frontend import dynamics
