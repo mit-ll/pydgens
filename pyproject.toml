@@ -55,18 +55,32 @@ where = ["src"]
 version = { attr = "pydgens.__version__" }
 
 [project.optional-dependencies]
-dev = [
-  "line_profiler",
-  "pyinstrument",
+test = [
   "pytest",
   "pytest-rich",
   "pytest-benchmark",
+]
+profile = [
+  "pydgens[test]",
+  "pyinstrument",
+  "line_profiler",
   "scalene",
   "tensorboard",
+  "tensorboard-plugin-profile",
+]
+docs = [
   "zensical",
   "mkdocstrings-python",
+]
+visuals = [
   "matplotlib",
   "pillow",
+]
+dev = [
+  "pydgens[test]",
+  "pydgens[profile]",
+  "pydgens[docs]",
+  "pydgens[visuals]",
 ]
 full = ["pydgens[dev]"]
 
