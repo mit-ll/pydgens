@@ -1,7 +1,7 @@
 # PYDGENS: Python/JAX Differential Game Equilibria Numerical Solvers
 
 <p align="center">
-  <img src="docs/assets/pydgens-logo.png" alt="PYDGENS logo" width="300">
+  <img src="https://raw.githubusercontent.com/mit-ll/pydgens/main/docs/assets/pydgens-logo.png" alt="PYDGENS logo" width="300">
 </p>
 
 <h3 align="center">
@@ -21,27 +21,27 @@ PYDGENS is a pre-`1.0` release. The package is ready for early adopters, but the
 <table>
   <tr>
     <td width="72%">
-      <img src="docs/assets/multi_car_intersection.gif" alt="Multi-car intersection game solved with PYDGENS" width="100%">
+      <img src="https://raw.githubusercontent.com/mit-ll/pydgens/main/docs/assets/multi_car_intersection.gif" alt="Multi-car intersection game solved with PYDGENS" width="100%">
     </td>
     <td width="28%">
       <strong>Multi-car intersection</strong>
       <br><br>
       Naive collisions compared to an iLQ feedback solution.
       <br><br>
-      <a href="src/pydgens/examples/multi_car_intersection.py">Source</a> ·
+      <a href="https://github.com/mit-ll/pydgens/blob/main/src/pydgens/examples/multi_car_intersection.py">Source</a> ·
       <a href="https://mit-ll.github.io/pydgens/examples/#multi-car-intersection">Docs</a>
     </td>
   </tr>
   <tr>
     <td width="72%">
-      <img src="docs/assets/satellite_lady_bandit_guard.gif" alt="Satellite Lady-Bandit-Guard game solved with PYDGENS" width="100%">
+      <img src="https://raw.githubusercontent.com/mit-ll/pydgens/main/docs/assets/satellite_lady_bandit_guard.gif" alt="Satellite Lady-Bandit-Guard game solved with PYDGENS" width="100%">
     </td>
     <td width="28%">
       <strong>Satellite Lady-Bandit-Guard</strong>
       <br><br>
       One LQ feedback Nash strategy rolled out from many initial states.
       <br><br>
-      <a href="src/pydgens/examples/satellite_lady_bandit_guard.py">Source</a> ·
+      <a href="https://github.com/mit-ll/pydgens/blob/main/src/pydgens/examples/satellite_lady_bandit_guard.py">Source</a> ·
       <a href="https://mit-ll.github.io/pydgens/examples/#satellite-lady-bandit-guard">Docs</a> ·
       <a href="https://github.com/mit-ll/spacegym-kspdg">spacegym-kspdg</a>
     </td>
