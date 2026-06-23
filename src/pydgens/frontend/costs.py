@@ -197,6 +197,52 @@ def quadratic_cost(
     return cost
 
 
+def matrix_quadratic_cost(
+    *,
+    nx: int,
+    nu: int,
+    state_matrix=None,
+    state_target=None,
+    terminal_state_matrix=None,
+    terminal_state_target=None,
+    control_matrix=None,
+    control_target=None,
+) -> QuadraticPlayerCost:
+    """
+    Create an advanced quadratic player cost from explicit full matrices.
+
+    This is the LQ companion to ``quadratic_cost(...)`` for games that need
+    coupled state terms such as ``||p_guard - alpha p_bandit||^2`` or
+    indefinite state rewards/penalties. The simpler ``quadratic_cost(...)``
+    remains the recommended beginner-facing factory for diagonal,
+    nonnegative weights.
+    """
+    cost = QuadraticPlayerCost(
+        nx=nx,
+        nu=nu,
+    )
+
+    if state_matrix is not None:
+        cost.set_state_matrix(state_matrix)
+
+    if state_target is not None:
+        cost.set_target_state(state_target)
+
+    if terminal_state_matrix is not None:
+        cost.set_terminal_state_matrix(terminal_state_matrix)
+
+    if terminal_state_target is not None:
+        cost.set_terminal_target_state(terminal_state_target)
+
+    if control_matrix is not None:
+        cost.set_control_matrix(control_matrix)
+
+    if control_target is not None:
+        cost.set_target_control(control_target)
+
+    return cost
+
+
 class AbstractPlayerCost(ABC):
     """
     Abstract base class for player-specific cost models.
@@ -301,8 +347,12 @@ class QuadraticPlayerCost(AbstractPlayerCost):
     which may use different internal matrix scalings during lowering into
     executable IR representations.
 
-    The frontend API currently restricts ``Qp`` and ``Rp`` to diagonal,
-    positive-semidefinite matrices for simplicity and clarity.
+    The beginner-facing ``quadratic_cost(...)`` factory builds diagonal costs
+    from nonnegative scalar weights for simplicity and clarity. Direct matrix
+    assignment through ``Qp``, ``Rp``, ``Qp_terminal``, or the explicit
+    ``set_*_matrix`` methods supports full matrices where the solver supports
+    them. State matrices must be symmetric and may be indefinite; control
+    matrices must be symmetric positive semidefinite.
 
     Attributes
     ----------
@@ -310,7 +360,10 @@ class QuadraticPlayerCost(AbstractPlayerCost):
         Joint-state quadratic penalty matrix.
 
     Rp:
-        Joint-control quadratic penalty matrix.
+        Joint-control quadratic penalty matrix. Must be symmetric positive
+        semidefinite. Additional solver-specific structure, such as
+        block-diagonal control coupling by player, is checked when the game is
+        lowered or solved.
 
     x_ref:
         Desired joint-state reference target.
@@ -394,33 +447,11 @@ class QuadraticPlayerCost(AbstractPlayerCost):
     @Qp.setter
     def Qp(self, value: jnp.ndarray):
 
-        value = jnp.asarray(value)
-
-        if value.ndim != 2:
-            raise ValueError(
-                f"`Qp` must be a 2D array. Got shape {value.shape}."
-            )
-
-        if value.shape != (self.nx, self.nx):
-            raise ValueError(
-                f"`Qp` must have shape ({self.nx}, {self.nx}). "
-                f"Got {value.shape}."
-            )
-
-        if not jnp.allclose(
+        self._Qp = _validate_symmetric_matrix(
             value,
-            jnp.diag(jnp.diag(value)),
-        ):
-            raise ValueError(
-                "`Qp` must currently be diagonal in the frontend API."
-            )
-
-        if jnp.any(jnp.diag(value) < 0):
-            raise ValueError(
-                "`Qp` diagonal entries must be nonnegative."
-            )
-
-        self._Qp = value
+            shape=(self.nx, self.nx),
+            name="Qp",
+        )
 
     # -----------------------------------------------------------------
     # Qp_terminal
@@ -436,33 +467,11 @@ class QuadraticPlayerCost(AbstractPlayerCost):
     @Qp_terminal.setter
     def Qp_terminal(self, value: jnp.ndarray):
 
-        value = jnp.asarray(value)
-
-        if value.ndim != 2:
-            raise ValueError(
-                f"`Qp_terminal` must be a 2D array. Got shape {value.shape}."
-            )
-
-        if value.shape != (self.nx, self.nx):
-            raise ValueError(
-                f"`Qp_terminal` must have shape ({self.nx}, {self.nx}). "
-                f"Got {value.shape}."
-            )
-
-        if not jnp.allclose(
+        self._Qp_terminal = _validate_symmetric_matrix(
             value,
-            jnp.diag(jnp.diag(value)),
-        ):
-            raise ValueError(
-                "`Qp_terminal` must currently be diagonal in the frontend API."
-            )
-
-        if jnp.any(jnp.diag(value) < 0):
-            raise ValueError(
-                "`Qp_terminal` diagonal entries must be nonnegative."
-            )
-
-        self._Qp_terminal = value
+            shape=(self.nx, self.nx),
+            name="Qp_terminal",
+        )
 
     # -----------------------------------------------------------------
     # Rp
@@ -478,33 +487,11 @@ class QuadraticPlayerCost(AbstractPlayerCost):
     @Rp.setter
     def Rp(self, value: jnp.ndarray):
 
-        value = jnp.asarray(value)
-
-        if value.ndim != 2:
-            raise ValueError(
-                f"`Rp` must be a 2D array. Got shape {value.shape}."
-            )
-
-        if value.shape != (self.nu, self.nu):
-            raise ValueError(
-                f"`Rp` must have shape ({self.nu}, {self.nu}). "
-                f"Got {value.shape}."
-            )
-
-        if not jnp.allclose(
+        self._Rp = _validate_positive_semidefinite_matrix(
             value,
-            jnp.diag(jnp.diag(value)),
-        ):
-            raise ValueError(
-                "`Rp` must currently be diagonal in the frontend API."
-            )
-
-        if jnp.any(jnp.diag(value) < 0):
-            raise ValueError(
-                "`Rp` diagonal entries must be nonnegative."
-            )
-
-        self._Rp = value
+            shape=(self.nu, self.nu),
+            name="Rp",
+        )
 
     # -----------------------------------------------------------------
     # x_ref
@@ -630,6 +617,14 @@ class QuadraticPlayerCost(AbstractPlayerCost):
 
         self.Qp = Qp
 
+    def set_state_matrix(self, matrix):
+        """
+        Set a full joint-state matrix for advanced LQ games.
+
+        This is a descriptive wrapper around the ``Qp`` property setter.
+        """
+        self.Qp = matrix
+
     # -----------------------------------------------------------------
     # Control costs
     # -----------------------------------------------------------------
@@ -682,6 +677,14 @@ class QuadraticPlayerCost(AbstractPlayerCost):
 
         self.Rp = Rp
 
+    def set_control_matrix(self, matrix):
+        """
+        Set a full joint-control matrix for advanced LQ games.
+
+        This is a descriptive wrapper around the ``Rp`` property setter.
+        """
+        self.Rp = matrix
+
     # -----------------------------------------------------------------
     # Terminal state costs
     # -----------------------------------------------------------------
@@ -724,6 +727,15 @@ class QuadraticPlayerCost(AbstractPlayerCost):
 
         self.Qp_terminal = Qp_terminal
 
+    def set_terminal_state_matrix(self, matrix):
+        """
+        Set a full terminal joint-state matrix for advanced LQ games.
+
+        This is a descriptive wrapper around the ``Qp_terminal`` property
+        setter.
+        """
+        self.Qp_terminal = matrix
+
     # -----------------------------------------------------------------
     # Reference targets
     # -----------------------------------------------------------------
@@ -754,3 +766,50 @@ class QuadraticPlayerCost(AbstractPlayerCost):
         Convenience wrapper for setting ``x_ref_terminal``.
         """
         self.x_ref_terminal = x_ref_terminal
+
+
+def _validate_symmetric_matrix(
+    matrix,
+    *,
+    shape: tuple[int, int],
+    name: str,
+):
+    matrix = jnp.asarray(matrix)
+
+    if matrix.ndim != 2:
+        raise ValueError(
+            f"`{name}` must be a 2D array. Got shape {matrix.shape}."
+        )
+
+    if matrix.shape != shape:
+        raise ValueError(
+            f"`{name}` must have shape {shape}. Got {matrix.shape}."
+        )
+
+    if not jnp.allclose(matrix, matrix.T):
+        raise ValueError(
+            f"`{name}` must be symmetric."
+        )
+
+    return matrix
+
+
+def _validate_positive_semidefinite_matrix(
+    matrix,
+    *,
+    shape: tuple[int, int],
+    name: str,
+):
+    matrix = _validate_symmetric_matrix(
+        matrix,
+        shape=shape,
+        name=name,
+    )
+
+    eigvals = jnp.linalg.eigvalsh(matrix)
+    if jnp.any(eigvals < -1e-10):
+        raise ValueError(
+            f"`{name}` must be positive semidefinite."
+        )
+
+    return matrix

@@ -19,6 +19,7 @@ from pydgens.frontend.dynamics import linear_dynamics
 from pydgens.frontend.dynamics import nonlinear_dynamics
 from pydgens.frontend.costs import player_cost
 from pydgens.frontend.costs import quadratic_cost
+from pydgens.frontend.costs import matrix_quadratic_cost
 from pydgens.frontend.constraints import control_bounds
 from pydgens.frontend.constraints import state_bounds
 from pydgens.frontend.constraints import constraint_set
@@ -37,6 +38,7 @@ __all__ = [
     "nonlinear_dynamics",
     "player_cost",
     "quadratic_cost",
+    "matrix_quadratic_cost",
     "control_bounds",
     "state_bounds",
     "constraint_set",

@@ -188,6 +188,78 @@ def test_quadratic_cost_factory_defaults_to_zero_cost_and_targets():
     )
 
 
+def test_matrix_quadratic_cost_factory_accepts_full_state_matrix():
+
+    Q = jnp.array([
+        [1.0, -0.5],
+        [-0.5, 2.0],
+    ])
+    R = jnp.eye(2)
+
+    cost = pdg.matrix_quadratic_cost(
+        nx=2,
+        nu=2,
+        state_matrix=Q,
+        control_matrix=R,
+    )
+
+    assert jnp.allclose(cost.Qp, Q)
+    assert jnp.allclose(cost.Rp, R)
+
+
+def test_matrix_quadratic_cost_factory_rejects_asymmetric_state_matrix():
+
+    Q = jnp.array([
+        [1.0, 2.0],
+        [0.0, 1.0],
+    ])
+
+    with pytest.raises(ValueError, match="symmetric"):
+        pdg.matrix_quadratic_cost(
+            nx=2,
+            nu=2,
+            state_matrix=Q,
+        )
+
+
+def test_matrix_quadratic_cost_factory_rejects_indefinite_control_matrix():
+
+    R = jnp.diag(jnp.array([1.0, -1.0]))
+
+    with pytest.raises(ValueError, match="positive semidefinite"):
+        pdg.matrix_quadratic_cost(
+            nx=2,
+            nu=2,
+            control_matrix=R,
+        )
+
+
+def test_matrix_quadratic_cost_wrappers_delegate_to_property_setters():
+
+    cost = pdg.costs.QuadraticPlayerCost(
+        nx=2,
+        nu=2,
+    )
+
+    Q = jnp.array([
+        [1.0, -2.0],
+        [-2.0, 1.0],
+    ])
+    Q_terminal = 2.0 * Q
+    R = jnp.array([
+        [2.0, 0.5],
+        [0.5, 1.0],
+    ])
+
+    cost.set_state_matrix(Q)
+    cost.set_terminal_state_matrix(Q_terminal)
+    cost.set_control_matrix(R)
+
+    assert jnp.allclose(cost.Qp, Q)
+    assert jnp.allclose(cost.Qp_terminal, Q_terminal)
+    assert jnp.allclose(cost.Rp, R)
+
+
 def test_quadratic_cost_factory_applies_terminal_state_weights_and_target():
 
     cost = pdg.quadratic_cost(
@@ -298,14 +370,18 @@ def test_default_u_ref_is_zero():
 # ---------------------------------------------------------------------
 
 
-def test_Qp_accepts_valid_diagonal_matrix():
+def test_Qp_accepts_valid_symmetric_matrix():
 
     cost = pdg.costs.QuadraticPlayerCost(
         nx=3,
         nu=2,
     )
 
-    Qp = jnp.diag(jnp.array([1.0, 2.0, 3.0]))
+    Qp = jnp.array([
+        [1.0, -0.5, 0.0],
+        [-0.5, 2.0, 0.25],
+        [0.0, 0.25, 3.0],
+    ])
 
     cost.Qp = Qp
 
@@ -336,7 +412,7 @@ def test_Qp_must_have_correct_shape():
         cost.Qp = jnp.eye(2)
 
 
-def test_Qp_must_be_diagonal():
+def test_Qp_must_be_symmetric():
 
     cost = pdg.costs.QuadraticPlayerCost(
         nx=3,
@@ -349,12 +425,12 @@ def test_Qp_must_be_diagonal():
         [0.0, 0.0, 3.0],
     ])
 
-    with pytest.raises(ValueError, match="diagonal"):
+    with pytest.raises(ValueError, match="symmetric"):
 
         cost.Qp = Qp
 
 
-def test_Qp_diagonal_entries_must_be_nonnegative():
+def test_Qp_allows_indefinite_state_matrix():
 
     cost = pdg.costs.QuadraticPlayerCost(
         nx=3,
@@ -363,9 +439,9 @@ def test_Qp_diagonal_entries_must_be_nonnegative():
 
     Qp = jnp.diag(jnp.array([1.0, -1.0, 2.0]))
 
-    with pytest.raises(ValueError, match="nonnegative"):
+    cost.Qp = Qp
 
-        cost.Qp = Qp
+    assert jnp.allclose(cost.Qp, Qp)
 
 
 def test_failed_Qp_assignment_does_not_mutate_state():
@@ -389,18 +465,76 @@ def test_failed_Qp_assignment_does_not_mutate_state():
 
 
 # ---------------------------------------------------------------------
-# Rp validation
+# Qp_terminal validation
 # ---------------------------------------------------------------------
 
 
-def test_Rp_accepts_valid_diagonal_matrix():
+def test_Qp_terminal_accepts_valid_symmetric_matrix():
 
     cost = pdg.costs.QuadraticPlayerCost(
         nx=3,
         nu=2,
     )
 
-    Rp = jnp.diag(jnp.array([1.0, 2.0]))
+    Qp_terminal = jnp.array([
+        [1.0, -0.5, 0.0],
+        [-0.5, 2.0, 0.25],
+        [0.0, 0.25, 3.0],
+    ])
+
+    cost.Qp_terminal = Qp_terminal
+
+    assert jnp.allclose(cost.Qp_terminal, Qp_terminal)
+
+
+def test_Qp_terminal_must_be_symmetric():
+
+    cost = pdg.costs.QuadraticPlayerCost(
+        nx=3,
+        nu=2,
+    )
+
+    Qp_terminal = jnp.array([
+        [1.0, 1.0, 0.0],
+        [0.0, 2.0, 0.0],
+        [0.0, 0.0, 3.0],
+    ])
+
+    with pytest.raises(ValueError, match="symmetric"):
+
+        cost.Qp_terminal = Qp_terminal
+
+
+def test_Qp_terminal_allows_indefinite_state_matrix():
+
+    cost = pdg.costs.QuadraticPlayerCost(
+        nx=3,
+        nu=2,
+    )
+
+    Qp_terminal = jnp.diag(jnp.array([1.0, -1.0, 2.0]))
+
+    cost.Qp_terminal = Qp_terminal
+
+    assert jnp.allclose(cost.Qp_terminal, Qp_terminal)
+
+
+# ---------------------------------------------------------------------
+# Rp validation
+# ---------------------------------------------------------------------
+
+
+def test_Rp_accepts_valid_positive_semidefinite_matrix():
+
+    cost = pdg.costs.QuadraticPlayerCost(
+        nx=3,
+        nu=2,
+    )
+
+    Rp = jnp.array([
+        [2.0, 0.5],
+        [0.5, 1.0],
+    ])
 
     cost.Rp = Rp
 
@@ -431,7 +565,7 @@ def test_Rp_must_have_correct_shape():
         cost.Rp = jnp.eye(3)
 
 
-def test_Rp_must_be_diagonal():
+def test_Rp_must_be_symmetric():
 
     cost = pdg.costs.QuadraticPlayerCost(
         nx=3,
@@ -443,12 +577,12 @@ def test_Rp_must_be_diagonal():
         [0.0, 2.0],
     ])
 
-    with pytest.raises(ValueError, match="diagonal"):
+    with pytest.raises(ValueError, match="symmetric"):
 
         cost.Rp = Rp
 
 
-def test_Rp_diagonal_entries_must_be_nonnegative():
+def test_Rp_must_be_positive_semidefinite():
 
     cost = pdg.costs.QuadraticPlayerCost(
         nx=3,
@@ -457,7 +591,7 @@ def test_Rp_diagonal_entries_must_be_nonnegative():
 
     Rp = jnp.diag(jnp.array([1.0, -1.0]))
 
-    with pytest.raises(ValueError, match="nonnegative"):
+    with pytest.raises(ValueError, match="positive semidefinite"):
 
         cost.Rp = Rp
 
