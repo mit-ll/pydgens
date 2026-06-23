@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `frontend/costs.py` matrix-based quadratic cost helper for advanced LQ games with coupled state costs
 - `frontend/__init__.py` curated frontend namespace matching the top-level constructor API
 - `docs/api.md` generated API reference scaffold using `mkdocstrings-python`
+- Example smoke tests for the multi-car intersection and satellite Lady-Bandit-Guard examples
 - `pillow` to optional dependencies for GIF rendering from `scripts/visuals`
 
 ### Changed
