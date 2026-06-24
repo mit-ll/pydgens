@@ -1113,6 +1113,35 @@ def residual_norm(g: jnp.ndarray, kind: ResidualNormKind) -> float:
     raise ValueError(f"Unknown residual norm kind: {kind}")
 
 
+def optimality_violation_inf_from_residual_struct(
+    res: altypes.ALResidualStruct,
+    u_splits: jnp.ndarray,
+) -> float:
+    """
+    Compute the stationarity-only L-infinity metric from an existing residual struct.
+
+    This is the same metric returned by `optimality_violation_inf`, but it avoids
+    rebuilding the full AL residual when the caller already has one. Only the
+    stationarity blocks are considered; dynamics feasibility is intentionally
+    excluded and should be tracked separately.
+    """
+    # dLdX: (N,K,nx) includes only X[1:] gradients already.
+    vio_x = 0.0 if res.dLdX.size == 0 else float(jnp.max(jnp.abs(res.dLdX)))
+
+    # dLdU is joint; restrict to each player's local control slice.
+    vio_u = 0.0
+    if res.dLdU.size != 0:
+        splits = np.asarray(u_splits, dtype=int)
+        starts = np.cumsum(np.concatenate(([0], splits[:-1])))
+        for i in range(int(res.dLdU.shape[0])):
+            sl = slice(int(starts[i]), int(starts[i] + splits[i]))
+            block = res.dLdU[i, :, sl]
+            if block.size:
+                vio_u = max(vio_u, float(jnp.max(jnp.abs(block))))
+
+    return max(vio_x, vio_u)
+
+
 def optimality_violation_inf(
     nlgame: gametypes.NonlinearGameType2,
     op: trajtypes.FixedStepPrimalDualTrajectory,
@@ -1165,21 +1194,7 @@ def optimality_violation_inf(
         ineq_activation=ineq_activation,
     )
 
-    # dLdX: (N,K,nx) includes only X[1:] gradients already (by your builder)
-    vio_x = 0.0 if res.dLdX.size == 0 else float(jnp.max(jnp.abs(res.dLdX)))
-
-    # dLdU is joint; restrict to each player's local control slice
-    vio_u = 0.0
-    if res.dLdU.size != 0:
-        splits = np.asarray(nlgame.u_splits, dtype=int)
-        starts = np.cumsum(np.concatenate(([0], splits[:-1])))
-        for i in range(int(res.dLdU.shape[0])):  # N
-            sl = slice(int(starts[i]), int(starts[i] + splits[i]))
-            block = res.dLdU[i, :, sl]
-            if block.size:
-                vio_u = max(vio_u, float(jnp.max(jnp.abs(block))))
-
-    return max(vio_x, vio_u)
+    return optimality_violation_inf_from_residual_struct(res, nlgame.u_splits)
 
 
 def _validate_linesearch_params(
@@ -1900,25 +1915,23 @@ def newton_solve_stationarity_autodiff(
         comparable to the older residual-norm solve and to the line-search objective used
         inside `newton_step_autodiff`.
         """
-        # -- optimality/stationarity metric --
-        opt = optimality_violation_inf(
-            nlgame, cur_op, alstate, discretize_method=discretize_method, ineq_activation=ineq_activation
+        res = compute_al_residual_struct_from_traj(
+            nlgame,
+            cur_op,
+            alstate,
+            discretize_method=discretize_method,
+            ineq_activation=ineq_activation,
         )
 
-        # -- dynamics feasibility metric --
-        # NOTE: this is also likely to be a misuse/inefficient use of dynamics residual.
-        # This should have already been computed elsewhere and could be passed on for constraint checking
-        D = systypes.residual_discrete_dynamics_trajectory(nlgame.cs, cur_op, method=discretize_method)
-        dyn = float(jnp.max(jnp.abs(D))) if D.size else 0.0
+        # -- optimality/stationarity and dynamics feasibility metrics --
+        opt = optimality_violation_inf_from_residual_struct(res, nlgame.u_splits)
+        dyn = float(jnp.max(jnp.abs(res.dyn_res))) if res.dyn_res.size else 0.0
 
-        if not (bool(jnp.isfinite(opt)) and bool(jnp.all(jnp.isfinite(dyn)))):
+        if not (bool(jnp.isfinite(opt)) and bool(jnp.isfinite(dyn))):
             return float("nan"), float("nan"), float("nan"), False
 
-        # -- Lagrangian gradient residual merit metric (i.e. opt+dyn) -- 
-        z = pack_decision_vars_1d(cur_op)
-        g = compute_al_residual_flat_from_decision_vars(
-            nlgame, z, cur_op, alstate, discretize_method=discretize_method, ineq_activation=ineq_activation
-        )
+        # -- Lagrangian gradient residual merit metric (i.e. opt+dyn) --
+        g = pack_al_residual_1d(res, u_splits=nlgame.u_splits)
         if not bool(jnp.all(jnp.isfinite(g))):
             return float(opt), float(dyn), float("nan"), False
 

@@ -2111,10 +2111,8 @@ def test_compute_al_residual_flat_from_decision_vars_warm_perf(benchmark):
     benchmark(run)
 
 
-@pytest.mark.benchmark(group="alsolver-residual-constraints-001")
-def test_compute_al_residual_flat_from_decision_vars_constraint_heavy_warm_perf(benchmark):
-    tg = TimeGrid(nt=24, dt=0.05, t0=0.0)
-    nt = tg.nt
+def _make_constraint_heavy_residual_problem(*, nt=24):
+    tg = TimeGrid(nt=nt, dt=0.05, t0=0.0)
     K = nt - 1
     nx = 4
     N = 2
@@ -2236,13 +2234,20 @@ def test_compute_al_residual_flat_from_decision_vars_constraint_heavy_warm_perf(
     )
     ls = jnp.zeros((K, N, nx), dtype=jnp.float32)
     op = FixedStepPrimalDualTrajectory(tg=tg, xs=xs, us=us, ls=ls)
-    z = pdg_alsolver.pack_decision_vars_1d(op)
     alstate = altypes.JointAugmentedLagrangianState(
         lam_ineq=jnp.zeros((constraints.nc_ineq,), dtype=jnp.float32),
         rho_ineq=jnp.ones((constraints.nc_ineq,), dtype=jnp.float32),
         lam_eq=jnp.zeros((constraints.nc_eq,), dtype=jnp.float32),
         rho_eq=jnp.ones((constraints.nc_eq,), dtype=jnp.float32),
     )
+
+    return nlgame, op, alstate
+
+
+@pytest.mark.benchmark(group="alsolver-residual-constraints-001")
+def test_compute_al_residual_flat_from_decision_vars_constraint_heavy_warm_perf(benchmark):
+    nlgame, op, alstate = _make_constraint_heavy_residual_problem(nt=24)
+    z = pdg_alsolver.pack_decision_vars_1d(op)
 
     def run():
         g = pdg_alsolver.compute_al_residual_flat_from_decision_vars(
@@ -2254,6 +2259,41 @@ def test_compute_al_residual_flat_from_decision_vars_constraint_heavy_warm_perf(
             ineq_activation="altro",
         )
         return g.block_until_ready()
+
+    benchmark(run)
+
+
+@pytest.mark.benchmark(group="alsolver-stationarity-metrics-constraints-001")
+def test_newton_solve_stationarity_start_metrics_constraint_heavy_warm_perf(benchmark):
+    nlgame, op, alstate = _make_constraint_heavy_residual_problem(nt=24)
+
+    def run():
+        op_out, diag = pdg_alsolver.newton_solve_stationarity_autodiff(
+            nlgame,
+            op,
+            alstate,
+            discretize_method="euler",
+            ineq_activation="altro",
+            opt_tol=1e9,
+            dyn_tol=1e9,
+            max_iters=0,
+            max_rejects=0,
+            step_rtol=1e-7,
+            step_atol=1e-8,
+            reg0=0.0,
+            reg1_min=1e-12,
+            reg_increase=10.0,
+            reg_max=1e8,
+            reg_max_iters=64,
+            ls_alpha0=1.0,
+            ls_tau=0.5,
+            ls_beta=0.25,
+            ls_max_iters=20,
+            normkind="l1_mean",
+        )
+        assert op_out is op
+        assert diag.reason == "opt_dyn_tol_at_start"
+        return jnp.asarray(diag.merit_norms[-1]).block_until_ready()
 
     benchmark(run)
 
@@ -2521,9 +2561,10 @@ def test_jacobian_al_residual_flat_autodiff_matches_finite_difference(monkeypatc
     ls = jnp.zeros((K, N, nx), dtype=jnp.float64)
     template_op = FixedStepPrimalDualTrajectory(tg=tg, xs=xs, us=us, ls=ls)
 
-    # minimal nlgame mock: must provide tg, cs, u_splits (and whatever compute_al_residual_struct uses)
+    # minimal nlgame mock: must provide fields used by compute_al_residual_struct
     cs = SimpleNamespace(tg=tg)
-    nlgame = SimpleNamespace(tg=tg, cs=cs, u_splits=u_splits, N=N)
+    constraints = GameConstraintGridMap(ineq_blocks=(), eq_blocks=())
+    nlgame = SimpleNamespace(tg=tg, cs=cs, constraints=constraints, u_splits=u_splits, N=N)
 
     # minimal AL state (not used by fake residual pieces)
     alstate = SimpleNamespace()
@@ -3759,11 +3800,19 @@ def _stub_game_op_alstate_for_solve():
 def _stub_game_op_alstate_for_stationarity():
     tg = TimeGrid(nt=4, dt=0.1, t0=0.0)
     cs = SimpleNamespace()
-    nlgame = SimpleNamespace(tg=tg, cs=cs)
+    nlgame = SimpleNamespace(tg=tg, cs=cs, u_splits=jnp.array([1], dtype=jnp.int32))
     op0 = SimpleNamespace(tg=tg, name="op0")
     # op0 = SimpleNamespace(tg=tg)
     alstate = SimpleNamespace()
     return nlgame, op0, alstate
+
+
+def _stationarity_metrics_residual(*, opt=1.0, dyn=0.0):
+    return altypes.ALResidualStruct(
+        dLdX=jnp.array([[[opt]]], dtype=jnp.float32),
+        dLdU=jnp.zeros((1, 1, 1), dtype=jnp.float32),
+        dyn_res=jnp.array([[dyn]], dtype=jnp.float32),
+    )
 
 
 def test_newton_solve_stationarity_rejects_invalid_params():
@@ -3848,18 +3897,16 @@ def test_newton_solve_stationarity_rejects_timegrid_mismatch(monkeypatch):
 def test_newton_solve_stationarity_returns_reason_on_nonfinite_residual_at_start(monkeypatch):
     nlgame, op0, alstate = _stub_game_op_alstate_for_stationarity()
 
-    # opt metric at start is finite
-    monkeypatch.setattr(pdg_alsolver, "optimality_violation_inf", lambda *a, **k: 1.0)
-    monkeypatch.setattr(pdg_alsolver, "pack_decision_vars_1d", lambda *_: jnp.array([1.0], dtype=jnp.float32))
-    monkeypatch.setattr(
-        pdg_alsolver,
-        "compute_al_residual_flat_from_decision_vars",
-        lambda *a, **k: jnp.array([jnp.inf], dtype=jnp.float32),
-    )
+    # Non-finite stationarity should fail before any Newton step.
     monkeypatch.setattr(
         pdg_alsolver.systypes,
         "residual_discrete_dynamics_trajectory",
-        lambda *a, **ka: jnp.ones((nlgame.tg.nt-1, 1))
+        lambda *a, **ka: (_ for _ in ()).throw(AssertionError("should use residual struct")),
+    )
+    monkeypatch.setattr(
+        pdg_alsolver,
+        "compute_al_residual_struct_from_traj",
+        lambda *a, **k: _stationarity_metrics_residual(opt=jnp.inf, dyn=0.0),
     )
 
     op_out, diag = pdg_alsolver.newton_solve_stationarity_autodiff(
@@ -3883,13 +3930,8 @@ def test_newton_solve_stationarity_returns_reason_on_nonfinite_residual_at_start
 
     monkeypatch.setattr(
         pdg_alsolver,
-        "compute_al_residual_flat_from_decision_vars",
-        lambda *a, **k: jnp.array([0.0], dtype=jnp.float32),
-    )
-    monkeypatch.setattr(
-        pdg_alsolver.systypes,
-        "residual_discrete_dynamics_trajectory",
-        lambda *a, **ka: jnp.ones((nlgame.tg.nt-1, 1))*jnp.inf
+        "compute_al_residual_struct_from_traj",
+        lambda *a, **k: _stationarity_metrics_residual(opt=0.0, dyn=jnp.inf),
     )
 
     op_out, diag = pdg_alsolver.newton_solve_stationarity_autodiff(
@@ -3915,17 +3957,15 @@ def test_newton_solve_stationarity_returns_reason_on_nonfinite_residual_at_start
 def test_newton_solve_stationarity_opt_tol_at_start_does_not_step(monkeypatch):
     nlgame, op0, alstate = _stub_game_op_alstate_for_stationarity()
 
-    monkeypatch.setattr(pdg_alsolver, "optimality_violation_inf", lambda *a, **k: 1e-6)
-    monkeypatch.setattr(pdg_alsolver, "pack_decision_vars_1d", lambda *_: jnp.array([0.0], dtype=jnp.float32))
     monkeypatch.setattr(
         pdg_alsolver,
-        "compute_al_residual_flat_from_decision_vars",
-        lambda *a, **k: jnp.array([0.0], dtype=jnp.float32),
+        "compute_al_residual_struct_from_traj",
+        lambda *a, **k: _stationarity_metrics_residual(opt=1e-6, dyn=0.0),
     )
     monkeypatch.setattr(
         pdg_alsolver.systypes,
         "residual_discrete_dynamics_trajectory",
-        lambda *a, **ka: jnp.zeros((nlgame.tg.nt-1, 1))
+        lambda *a, **ka: (_ for _ in ()).throw(AssertionError("should use residual struct")),
     )
 
     monkeypatch.setattr(
@@ -3952,34 +3992,71 @@ def test_newton_solve_stationarity_opt_tol_at_start_does_not_step(monkeypatch):
     assert diag.converged
     assert diag.iters == 0
     assert diag.reason == "opt_dyn_tol_at_start"
-    assert diag.opt_vios == (1e-6,)
+    assert diag.opt_vios == pytest.approx((1e-6,))
+
+
+def test_newton_solve_stationarity_metrics_reuse_structured_residual_at_start(monkeypatch):
+    nlgame, op0, alstate = _stub_game_op_alstate_for_stationarity()
+    calls = {"residual_struct": 0}
+
+    def fake_residual_struct(*args, **kwargs):
+        calls["residual_struct"] += 1
+        return _stationarity_metrics_residual(opt=0.0, dyn=0.0)
+
+    monkeypatch.setattr(pdg_alsolver, "compute_al_residual_struct_from_traj", fake_residual_struct)
+    monkeypatch.setattr(
+        pdg_alsolver,
+        "compute_al_residual_flat_from_decision_vars",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("should pack existing residual struct")),
+    )
+    monkeypatch.setattr(
+        pdg_alsolver.systypes,
+        "residual_discrete_dynamics_trajectory",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("should use residual struct dyn_res")),
+    )
+    monkeypatch.setattr(
+        pdg_alsolver,
+        "newton_step_autodiff",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not step")),
+    )
+
+    op_out, diag = pdg_alsolver.newton_solve_stationarity_autodiff(
+        nlgame, op0, alstate,
+        discretize_method="rk2",
+        ineq_activation="altro",
+        opt_tol=1e-3,
+        dyn_tol=1e-3,
+        max_iters=10,
+        max_rejects=5,
+        step_rtol=1e-7, step_atol=1e-8,
+        reg0=0.0, reg1_min=1e-12, reg_increase=10.0, reg_max=1e8, reg_max_iters=64,
+        ls_alpha0=1.0, ls_tau=0.5, ls_beta=0.25, ls_max_iters=20,
+        normkind="l1_mean",
+    )
+
+    assert op_out is op0
+    assert diag.converged
+    assert diag.reason == "opt_dyn_tol_at_start"
+    assert calls == {"residual_struct": 1}
 
 
 def test_newton_solve_stationarity_reject_streak_returns_last_accepted(monkeypatch):
     tg = TimeGrid(nt=4, dt=0.1, t0=0.0)
-    nlgame = SimpleNamespace(tg=tg, cs=None)
+    nlgame = SimpleNamespace(tg=tg, cs=None, u_splits=jnp.array([1], dtype=jnp.int32))
     op0 = SimpleNamespace(tg=tg, name="op0")
     alstate = SimpleNamespace()
 
-    # pack + residual just need to be finite
-    monkeypatch.setattr(pdg_alsolver, "pack_decision_vars_1d", lambda op: op.name)
     monkeypatch.setattr(
         pdg_alsolver,
-        "compute_al_residual_flat_from_decision_vars",
-        lambda *a, **k: jnp.array([1.0], dtype=jnp.float32),
+        "compute_al_residual_struct_from_traj",
+        lambda *a, **k: _stationarity_metrics_residual(opt=1.0, dyn=0.0),
     )
 
-    # dynamics violation within tolerance; this is not what prevents convergence
     monkeypatch.setattr(
         pdg_alsolver.systypes,
         "residual_discrete_dynamics_trajectory",
-        lambda *a, **ka: jnp.zeros((nlgame.tg.nt-1, 1))
+        lambda *a, **ka: (_ for _ in ()).throw(AssertionError("should use residual struct")),
     )
-
-    # opt vio: always above tol so we don't converge
-    def fake_opt(nlgame_, op, alstate_, **kwargs):
-        return 1.0 if op.name in ("op0", "opA") else 1.0
-    monkeypatch.setattr(pdg_alsolver, "optimality_violation_inf", fake_opt)
 
     calls = {"k": 0}
     def fake_step(nlgame_, op, alstate_, **kwargs):
@@ -4029,26 +4106,21 @@ def test_newton_solve_stationarity_reject_streak_returns_last_accepted(monkeypat
 
 def test_newton_solve_stationarity_step_stall_before_opt_tol(monkeypatch):
     tg = TimeGrid(nt=4, dt=0.1, t0=0.0)
-    nlgame = SimpleNamespace(tg=tg, cs=None)
+    nlgame = SimpleNamespace(tg=tg, cs=None, u_splits=jnp.array([1], dtype=jnp.int32))
     op0 = SimpleNamespace(tg=tg, name="op0")
     alstate = SimpleNamespace()
 
-    monkeypatch.setattr(pdg_alsolver, "pack_decision_vars_1d", lambda op: op.name)
     monkeypatch.setattr(
         pdg_alsolver,
-        "compute_al_residual_flat_from_decision_vars",
-        lambda *a, **k: jnp.array([1.0], dtype=jnp.float32),
+        "compute_al_residual_struct_from_traj",
+        lambda *a, **k: _stationarity_metrics_residual(opt=1.0, dyn=0.0),
     )
 
-    # dynamics violation within tolerance; this is not what prevents convergence
     monkeypatch.setattr(
         pdg_alsolver.systypes,
         "residual_discrete_dynamics_trajectory",
-        lambda *a, **ka: jnp.zeros((nlgame.tg.nt-1, 1))
+        lambda *a, **ka: (_ for _ in ()).throw(AssertionError("should use residual struct")),
     )
-
-    # iteration 0 opt = 1.0, after step still 1.0 (above tol)
-    monkeypatch.setattr(pdg_alsolver, "optimality_violation_inf", lambda *a, **k: 1.0)
 
     def fake_step(*a, **k):
         diag = altypes.NewtonStepDiag(
@@ -4267,17 +4339,11 @@ def test_newton_solve_stationarity_autodiff_does_not_converge_at_start_if_dynami
     """
     nlgame, op0, alstate = _make_infeasible_op_and_game_for_dyn_check()
 
-    # Force stationarity to look perfect
-    monkeypatch.setattr(pdg_alsolver, "optimality_violation_inf", lambda *a, **k: 0.0)
-
-    # Also avoid needing a real residual builder by returning a finite vector for merit_norm bookkeeping.
     monkeypatch.setattr(
         pdg_alsolver,
-        "compute_al_residual_flat_from_decision_vars",
-        lambda *a, **k: jnp.array([1.0], dtype=jnp.float32),
+        "compute_al_residual_struct_from_traj",
+        lambda *a, **k: _stationarity_metrics_residual(opt=0.0, dyn=10.0),
     )
-    # Packing doesn't matter, but avoid accidental shape issues
-    monkeypatch.setattr(pdg_alsolver, "pack_decision_vars_1d", lambda *_a, **_k: jnp.array([0.0], dtype=jnp.float32))
 
     # If your solver is fixed per Option A, it should check dynamics feasibility and refuse opt_dyn_tol_at_start.
     op_out, diag = pdg_alsolver.newton_solve_stationarity_autodiff(
@@ -4318,22 +4384,16 @@ def test_newton_solve_stationarity_nonfinite_dyn_residual_does_not_converge(monk
     op0 = SimpleNamespace(tg=tg)
     alstate = SimpleNamespace()
 
-    # Stationarity is "perfect"
-    monkeypatch.setattr(pdg_alsolver, "optimality_violation_inf", lambda *a, **k: 0.0)
-
-    # Residual is finite (so we don't trip residual nonfinite guardrail)
-    monkeypatch.setattr(pdg_alsolver, "pack_decision_vars_1d", lambda *_: jnp.array([0.0], dtype=jnp.float32))
     monkeypatch.setattr(
         pdg_alsolver,
-        "compute_al_residual_flat_from_decision_vars",
-        lambda *a, **k: jnp.array([0.0], dtype=jnp.float32),
+        "compute_al_residual_struct_from_traj",
+        lambda *a, **k: _stationarity_metrics_residual(opt=0.0, dyn=jnp.nan),
     )
 
-    # Dynamics residual is non-finite
     monkeypatch.setattr(
         pdg_alsolver.systypes,
         "residual_discrete_dynamics_trajectory",
-        lambda *a, **k: jnp.array([[jnp.nan]], dtype=jnp.float32),
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("should use residual struct")),
     )
 
     # Make stepping unreachable so we only test iteration-0 convergence decision
@@ -4378,13 +4438,11 @@ def test_stationarity_newton_reports_dyn_violation_metric(monkeypatch):
     """
     nlgame, op0, alstate = _make_infeasible_op_and_game_for_dyn_check()
 
-    monkeypatch.setattr(pdg_alsolver, "optimality_violation_inf", lambda *a, **k: 0.0)
     monkeypatch.setattr(
         pdg_alsolver,
-        "compute_al_residual_flat_from_decision_vars",
-        lambda *a, **k: jnp.array([1.0], dtype=jnp.float32),
+        "compute_al_residual_struct_from_traj",
+        lambda *a, **k: _stationarity_metrics_residual(opt=0.0, dyn=10.0),
     )
-    monkeypatch.setattr(pdg_alsolver, "pack_decision_vars_1d", lambda *_a, **_k: jnp.array([0.0], dtype=jnp.float32))
 
     op_out, diag = pdg_alsolver.newton_solve_stationarity_autodiff(
         nlgame, op0, alstate,
