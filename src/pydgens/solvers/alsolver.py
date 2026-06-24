@@ -1027,6 +1027,10 @@ def jacobian_al_residual_flat_structured(
     z = jnp.asarray(z)
     op = unpack_decision_vars(z, template_op, check_length=True)
 
+    # The structured backend still returns a dense flat Jacobian because the
+    # current Newton step consumes a 2D matrix. The "structured" part here is how
+    # we assemble that matrix: by placing known blocks directly, rather than
+    # asking autodiff for the full dense derivative of the packed residual.
     K = op.nsteps
     nx = op.nx
     nu = op.nu
@@ -1052,13 +1056,26 @@ def jacobian_al_residual_flat_structured(
     A = ingredients.dfd_dx
     B = ingredients.dfd_du
 
-    # Decision packing: z = [vec(X[1:]); vec(U); vec(mu)]
+    # Decision packing: z = [vec(X[1:]); vec(U); vec(mu)].
+    #
+    # x0 is intentionally absent from z because the initial condition is fixed.
+    # Therefore x_col(j_tail, b) below maps decision state X[j_tail + 1, b], not
+    # full trajectory state X[j_tail, b]. This off-by-one is the easiest place to
+    # make a sign/indexing mistake in the dynamics blocks.
     x_col0 = 0
     u_col0 = K * nx
     mu_col0 = u_col0 + K * nu
     nz = mu_col0 + K * N * nx
 
-    # Residual packing: for each player [vec(dLdX_i); vec(dLdU_i_local)], then vec(D)
+    # Residual packing mirrors pack_al_residual_1d:
+    #
+    #   [ player 0: vec(dLdX_0), vec(dLdU_0 local);
+    #     player 1: vec(dLdX_1), vec(dLdU_1 local);
+    #     ...
+    #     vec(D) ]
+    #
+    # dLdU is computed in joint coordinates internally, but only each player's
+    # local control slice appears in that player's residual rows.
     player_x_row0: List[int] = []
     player_u_row0: List[int] = []
     row = 0
@@ -1070,8 +1087,10 @@ def jacobian_al_residual_flat_structured(
     dyn_row0 = row
     ng = dyn_row0 + K * nx
 
-    # This backend is an explicit block assembler, not a JIT kernel. Building the
-    # dense matrix through a host buffer avoids thousands of tiny JAX `.at` updates.
+    # This backend is an explicit block assembler, not a JIT kernel. The expensive
+    # local derivatives (A/B, cost Hessians) are still computed by JAX, but once
+    # we know the block values, writing into a host NumPy buffer is much faster
+    # than thousands of tiny JAX `.at` updates into a dense matrix.
     H_np = np.zeros((ng, nz), dtype=np.asarray(jax.device_get(z)).dtype)
     A_np = np.asarray(jax.device_get(A))
     B_np = np.asarray(jax.device_get(B))
@@ -1085,7 +1104,10 @@ def jacobian_al_residual_flat_structured(
     def mu_col(k: int, i: int, b: int) -> int:
         return mu_col0 + ((k * N + i) * nx) + b
 
-    # Feasibility rows: D_k = f_d(x_k, u_k) - x_{k+1}
+    # Feasibility rows: D_k = f_d(x_k, u_k) - x_{k+1}.
+    #
+    # These rows are banded in time: each D_k touches only x_k, u_k, and x_{k+1}.
+    # Because x0 is fixed, the x_k block is omitted when k == 0.
     for k in range(K):
         for a in range(nx):
             r_dyn = dyn_row0 + k * nx + a
@@ -1103,6 +1125,14 @@ def jacobian_al_residual_flat_structured(
                 H_np[r_dyn, u_col(k, b)] += B_np[k, a, b]
 
     # Stationarity rows, multiplier columns.
+    #
+    # The dynamics part of player i's stationarity residual is:
+    #   ∂/∂x_j Σ_k μ_{k,i}ᵀ D_k = A_jᵀ μ_{j,i} - μ_{j-1,i}
+    #   ∂/∂u_k Σ_k μ_{k,i}ᵀ D_k = B_kᵀ μ_{k,i}
+    #
+    # This first-order slice places derivatives of those expressions with
+    # respect to μ. Derivatives with respect to x/u through A_k or B_k are
+    # nonlinear-dynamics curvature terms and are intentionally not assembled yet.
     for i in range(N):
         # State stationarity for decision states x_j, j=1..K.
         for j_tail in range(K):
@@ -1130,6 +1160,11 @@ def jacobian_al_residual_flat_structured(
                     H_np[r_u, mu_col(k, i, b)] += B_np[k, b, u_joint]
 
     if include_second_order:
+        # Cost curvature is player-local in the current AL formulation. For each
+        # stage, we differentiate running_i(t, x_k, u_{k,i}) with respect to the
+        # concatenated vector [x_k, u_{k,i}], then place the resulting Hessian into
+        # the appropriate stationarity rows/decision columns. This captures x-x,
+        # x-u, u-x, and u-u cost curvature, including mixed state/control terms.
         ts = timetypes.compute_ts(op.tg).astype(op.xs.dtype)
 
         for i in range(N):
@@ -1155,7 +1190,8 @@ def jacobian_al_residual_flat_structured(
                 H_uu = H_xu[nx:, nx:]
 
                 # Running cost at stage k contributes to dLdX[:, k] only if x_k
-                # is a decision variable; x0 is fixed and has no residual row.
+                # is a decision variable; x0 is fixed and has no residual row or
+                # column in the packed Newton system.
                 if k > 0:
                     j_tail = k - 1
                     for a in range(nx):
@@ -1174,6 +1210,8 @@ def jacobian_al_residual_flat_structured(
                         H_np[r_u, u_col(k, u0_i + c)] += H_uu[a, c]
 
             if cost_i.terminal is not None:
+                # Terminal cost contributes only to the final state stationarity
+                # row, i.e. X[K], which is decision tail index K - 1.
                 H_T = np.asarray(
                     jax.device_get(
                         _terminal_cost_hessian(cost_i.terminal, ts[-1], op.xs[-1])
