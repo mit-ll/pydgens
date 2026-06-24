@@ -39,6 +39,34 @@ class _ALResidualIngredients:
     These are factored out so residual assembly, diagnostics, and future structured
     Jacobian assembly can consume the same expensive per-trajectory ingredients.
 
+    Attributes
+    ----------
+    ineq_lins:
+        Tuple of per-step linearizations for the stacked auxiliary inequality
+        constraints. Each `ConstraintStepLinearization` stores the constraint value
+        `c`, state Jacobian `Jx = ∂c/∂x`, optional control Jacobian
+        `Ju = ∂c/∂u`, and the slice `sl` into the flat inequality AL vectors
+        (`lam_ineq`, `rho_ineq`).
+    eq_lins:
+        Tuple of per-step linearizations for the stacked auxiliary equality
+        constraints. The layout is the same as `ineq_lins`, except `sl` indexes
+        the flat equality AL vectors (`lam_eq`, `rho_eq`).
+    dfd_dx:
+        Trajectory Jacobian of the discretized dynamics with respect to the joint
+        state at the start of each time step. If
+        `x_{k+1} = f_d(t_k, x_k, u_k)`, then
+        `dfd_dx[k] = ∂f_d/∂x_k` with shape `(nx, nx)`, and the full array has
+        shape `(nsteps, nx, nx)`. This is the `A_k` block used by dynamics
+        stationarity and structured Jacobian assembly. It is `None` when the
+        system type does not currently provide trajectory dynamics Jacobians.
+    dfd_du:
+        Trajectory Jacobian of the discretized dynamics with respect to the joint
+        control at each time step. If `x_{k+1} = f_d(t_k, x_k, u_k)`, then
+        `dfd_du[k] = ∂f_d/∂u_k` with shape `(nx, nu)`, and the full array has
+        shape `(nsteps, nx, nu)`. This is the `B_k` block used by dynamics
+        stationarity and structured Jacobian assembly. It is `None` when the
+        system type does not currently provide trajectory dynamics Jacobians.
+
     NOTE: This is currently implemented in alsolver, rather than altypes, becaus it is an
     solver-internal caching/plumbing object, rather than a class that is meant to be
     generally reusable. To help make this distinction, it is named as a "private 
@@ -992,6 +1020,41 @@ def _terminal_cost_hessian(
     return jax.hessian(lambda x_: termfn_i(t, x_))(x)
 
 
+@partial(jax.jit, static_argnums=(0, 4))
+def _step_constraint_hessians(
+    func: Callable,
+    t: jnp.ndarray,
+    x: jnp.ndarray,
+    u: jnp.ndarray,
+    cdim: int,
+) -> jnp.ndarray:
+    """Component Hessians of c(t, x, u) with respect to concatenated [x, u]."""
+    nx = x.shape[0]
+
+    def c_xu(xu):
+        return contypes._normalize_constraint_output_1d(
+            func(t, xu[:nx], xu[nx:]),
+            cdim,
+        )
+
+    xu0 = jnp.concatenate([x, u])
+    return jax.jacfwd(jax.jacrev(c_xu))(xu0)
+
+
+@partial(jax.jit, static_argnums=(0, 3))
+def _terminal_constraint_hessians(
+    func: Callable,
+    t: jnp.ndarray,
+    x: jnp.ndarray,
+    cdim: int,
+) -> jnp.ndarray:
+    """Component Hessians of terminal c(t, x) with respect to x."""
+    def c_x(x_):
+        return contypes._normalize_constraint_output_1d(func(t, x_), cdim)
+
+    return jax.jacfwd(jax.jacrev(c_x))(x)
+
+
 def jacobian_al_residual_flat_structured(
     nlgame: gametypes.NonlinearGameType2,
     z: jnp.ndarray,
@@ -1225,25 +1288,63 @@ def jacobian_al_residual_flat_structured(
         #
         # This slice assembles the exact penalty Hessian for linear constraints:
         #   ∇² 1/2 CᵀρC = Jᵀ diag(ρ_active) J
-        # For nonlinear constraints, the omitted term is
-        #   Σ_m (λ_m + ρ_m c_m) ∇²C_m
-        # so this remains a Gauss-Newton/linearization block until constraint
-        # Hessian support is added.
+        # and the full nonlinear component-Hessian term:
+        #   Σ_m (λ_m + ρ_active,m c_m) ∇²C_m       (inequality)
+        #   Σ_m (λ_m + ρ_m c_m) ∇²C_m              (equality)
         def add_constraint_penalty_curvature(
             lin: contypes.ConstraintStepLinearization,
-            weights: np.ndarray,
+            jtj_weights: np.ndarray,
+            hess_weights: np.ndarray,
         ) -> None:
             Jx = np.asarray(jax.device_get(lin.Jx))
             Ju = None if lin.Ju is None else np.asarray(jax.device_get(lin.Ju))
-            wJx = weights[:, None] * Jx
+            wJx = jtj_weights[:, None] * Jx
             H_xx = Jx.T @ wJx
 
             H_xu = H_ux = H_uu = None
             if Ju is not None:
-                wJu = weights[:, None] * Ju
+                wJu = jtj_weights[:, None] * Ju
                 H_xu = Jx.T @ wJu
                 H_ux = Ju.T @ wJx
                 H_uu = Ju.T @ wJu
+
+            if lin.func is None:
+                raise ValueError("Constraint Hessian assembly requires linearizations built from constraint callables.")
+
+            t = ts[lin.k]
+            if lin.terminal:
+                Hc = np.asarray(
+                    jax.device_get(
+                        _terminal_constraint_hessians(
+                            lin.func,
+                            t,
+                            op.xs[lin.k],
+                            lin.cdim,
+                        )
+                    )
+                )
+                Hc_xx = np.tensordot(hess_weights, Hc, axes=(0, 0))
+                H_xx = H_xx + Hc_xx
+            else:
+                Hc = np.asarray(
+                    jax.device_get(
+                        _step_constraint_hessians(
+                            lin.func,
+                            t,
+                            op.xs[lin.k],
+                            op.us[lin.k],
+                            lin.cdim,
+                        )
+                    )
+                )
+                Hc_xu_full = np.tensordot(hess_weights, Hc, axes=(0, 0))
+                H_xx = H_xx + Hc_xu_full[:nx, :nx]
+                Hc_xu = Hc_xu_full[:nx, nx:]
+                Hc_ux = Hc_xu_full[nx:, :nx]
+                Hc_uu = Hc_xu_full[nx:, nx:]
+                H_xu = Hc_xu if H_xu is None else H_xu + Hc_xu
+                H_ux = Hc_ux if H_ux is None else H_ux + Hc_ux
+                H_uu = Hc_uu if H_uu is None else H_uu + Hc_uu
 
             # Constraint state index k maps to decision tail k - 1. k == 0 is
             # the fixed initial condition, so there are no X rows/columns for it.
@@ -1276,18 +1377,22 @@ def jacobian_al_residual_flat_structured(
 
         for lin in ingredients.ineq_lins:
             rho = np.asarray(jax.device_get(alstate.rho_ineq[lin.sl]))
+            lam = np.asarray(jax.device_get(alstate.lam_ineq[lin.sl]))
+            c = np.asarray(jax.device_get(lin.c))
             if ineq_activation == "altro":
-                lam = np.asarray(jax.device_get(alstate.lam_ineq[lin.sl]))
-                c = np.asarray(jax.device_get(lin.c))
                 active = ((c >= 0.0) | (lam > 0.0)).astype(rho.dtype)
-                weights = rho * active
+                jtj_weights = rho * active
             else:
-                weights = rho
-            add_constraint_penalty_curvature(lin, weights)
+                jtj_weights = rho
+            hess_weights = lam + jtj_weights * c
+            add_constraint_penalty_curvature(lin, jtj_weights, hess_weights)
 
         for lin in ingredients.eq_lins:
-            weights = np.asarray(jax.device_get(alstate.rho_eq[lin.sl]))
-            add_constraint_penalty_curvature(lin, weights)
+            rho = np.asarray(jax.device_get(alstate.rho_eq[lin.sl]))
+            lam = np.asarray(jax.device_get(alstate.lam_eq[lin.sl]))
+            c = np.asarray(jax.device_get(lin.c))
+            hess_weights = lam + rho * c
+            add_constraint_penalty_curvature(lin, rho, hess_weights)
 
     return jnp.asarray(H_np)
 

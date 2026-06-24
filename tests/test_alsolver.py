@@ -2739,6 +2739,72 @@ def _make_linear_dynamics_quadratic_cost_linear_constraint_al_problem(*, nt=5, d
     return nlgame, op, alstate
 
 
+def _make_linear_dynamics_quadratic_cost_nonlinear_constraint_al_problem(*, nt=5, dtype=jnp.float32):
+    nlgame, op, _ = _make_linear_dynamics_quadratic_cost_al_problem(nt=nt, dtype=dtype)
+    tg = op.tg
+
+    def ineq_step(t, x, u):
+        return jnp.array(
+            [
+                x[0] ** 2 + 0.5 * u[0] ** 2 - 0.2,
+                x[1] * u[2] + 0.25 * u[1] ** 2 + 0.1,
+            ],
+            dtype=x.dtype,
+        )
+
+    def eq_step(t, x, u):
+        return jnp.array([x[0] * u[1] + 0.5 * x[1] ** 2 - 0.3 * u[2]], dtype=x.dtype)
+
+    def eq_terminal(t, x):
+        return jnp.array([0.5 * x[0] ** 2 + x[0] * x[1] - 0.4], dtype=x.dtype)
+
+    constraints = GameConstraintGridMap(
+        ineq_blocks=(
+            ConstraintBlockGridMap(
+                tg=tg,
+                func=ineq_step,
+                cdim_out_step=2,
+                active_steps=tuple(range(tg.nsteps)),
+                iseq=False,
+                terminal=False,
+            ),
+        ),
+        eq_blocks=(
+            ConstraintBlockGridMap(
+                tg=tg,
+                func=eq_step,
+                cdim_out_step=1,
+                active_steps=tuple(range(tg.nsteps)),
+                iseq=True,
+                terminal=False,
+            ),
+            ConstraintBlockGridMap(
+                tg=tg,
+                func=eq_terminal,
+                cdim_out_step=1,
+                active_steps=None,
+                iseq=True,
+                terminal=True,
+            ),
+        ),
+    )
+    nlgame = NonlinearGameType2(
+        cs=nlgame.cs,
+        N=nlgame.N,
+        costs=nlgame.costs,
+        constraints=constraints,
+        u_splits=nlgame.u_splits,
+    )
+    alstate = altypes.JointAugmentedLagrangianState(
+        lam_ineq=jnp.linspace(0.05, 0.35, constraints.nc_ineq, dtype=dtype),
+        rho_ineq=jnp.linspace(0.6, 1.1, constraints.nc_ineq, dtype=dtype),
+        lam_eq=jnp.linspace(-0.25, 0.25, constraints.nc_eq, dtype=dtype),
+        rho_eq=jnp.linspace(0.75, 1.3, constraints.nc_eq, dtype=dtype),
+    )
+
+    return nlgame, op, alstate
+
+
 def test_jacobian_al_residual_flat_autodiff_matches_finite_difference(monkeypatch):
     """
     Golden test: compare autodiff Jacobian of G(z) to finite-difference Jacobian
@@ -2931,6 +2997,78 @@ def test_jacobian_al_residual_flat_structured_linear_constraint_curvature_matche
 
     assert H_struct.shape == H_ad.shape
     np.testing.assert_allclose(np.asarray(H_struct), np.asarray(H_ad), rtol=4e-5, atol=4e-5)
+
+
+def test_jacobian_al_residual_flat_structured_nonlinear_constraint_curvature_matches_autodiff():
+    """
+    Nonlinear auxiliary constraints require both JᵀρJ and weighted ∇²c terms.
+    """
+    nlgame, op, alstate = _make_linear_dynamics_quadratic_cost_nonlinear_constraint_al_problem(
+        nt=5,
+        dtype=jnp.float32,
+    )
+    z = pdg_alsolver.pack_decision_vars_1d(op)
+
+    H_ad = pdg_alsolver.jacobian_al_residual_flat_autodiff(
+        nlgame,
+        z,
+        op,
+        alstate,
+        discretize_method="euler",
+        ineq_activation="none",
+        mode="jacfwd",
+    )
+    H_struct = pdg_alsolver.jacobian_al_residual_flat_structured(
+        nlgame,
+        z,
+        op,
+        alstate,
+        discretize_method="euler",
+        ineq_activation="none",
+        include_second_order=True,
+    )
+
+    assert H_struct.shape == H_ad.shape
+    np.testing.assert_allclose(np.asarray(H_struct), np.asarray(H_ad), rtol=6e-5, atol=6e-5)
+
+
+def test_jacobian_al_residual_flat_structured_nonlinear_constraint_altro_activation_matches_autodiff():
+    """
+    The structured Hessian should mirror the residual's stop-gradient ALTRO active set.
+    """
+    nlgame, op, alstate = _make_linear_dynamics_quadratic_cost_nonlinear_constraint_al_problem(
+        nt=5,
+        dtype=jnp.float32,
+    )
+    alstate = altypes.JointAugmentedLagrangianState(
+        lam_ineq=jnp.zeros_like(alstate.lam_ineq),
+        rho_ineq=alstate.rho_ineq,
+        lam_eq=alstate.lam_eq,
+        rho_eq=alstate.rho_eq,
+    )
+    z = pdg_alsolver.pack_decision_vars_1d(op)
+
+    H_ad = pdg_alsolver.jacobian_al_residual_flat_autodiff(
+        nlgame,
+        z,
+        op,
+        alstate,
+        discretize_method="euler",
+        ineq_activation="altro",
+        mode="jacfwd",
+    )
+    H_struct = pdg_alsolver.jacobian_al_residual_flat_structured(
+        nlgame,
+        z,
+        op,
+        alstate,
+        discretize_method="euler",
+        ineq_activation="altro",
+        include_second_order=True,
+    )
+
+    assert H_struct.shape == H_ad.shape
+    np.testing.assert_allclose(np.asarray(H_struct), np.asarray(H_ad), rtol=6e-5, atol=6e-5)
 
 
 @pytest.mark.benchmark(group="alsolver-jacobian-dynamics-001")
