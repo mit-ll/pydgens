@@ -57,7 +57,7 @@ def u_a(i: int) -> int:
 
 def build_ir_double_integrator_merge_diagnostic(
     *,
-    nt: int = 21,
+    nt: int = 6,
     dt: float = 0.1,
     a_max: float = 2.0,
     v_max: float = 6.0,
@@ -269,7 +269,7 @@ def build_ir_double_integrator_merge_diagnostic(
     return nlgame, op0, alstate0
 
 
-def solve_diagnostic_example():
+def solve_diagnostic_example(*, debug_logging: bool = False):
     """
     Run the known-problematic AL solve.
 
@@ -279,10 +279,16 @@ def solve_diagnostic_example():
     """
     nlgame, op0, alstate0 = build_ir_double_integrator_merge_diagnostic()
 
-    # create logger to pass to solver
-    logging.basicConfig(level=logging.INFO) # global config of root logger, to be run once
-    logger = logging.getLogger("al_solver")
-    logger.setLevel(logging.DEBUG)
+    # Configure solver logging only when explicitly requested.
+    if debug_logging:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+            force=True,
+        )
+        logging.getLogger("pydgens.solvers.alsolver").setLevel(logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.INFO, force=True)
 
     op_out, al_out, diag = alsolver.al_solve_autodiff(
         nlgame,
@@ -316,7 +322,6 @@ def solve_diagnostic_example():
         ls_max_iters=25,
         # norm used for merit function and linesearching convergence checks
         normkind="l1_mean",
-        # logger=logger
     )
 
     return nlgame, op_out, al_out, diag
@@ -347,6 +352,11 @@ def parse_args():
         action="store_true",
         help="Run the currently problematic AL solve path.",
     )
+    parser.add_argument(
+        "--debug-logging",
+        action="store_true",
+        help="Enable verbose debug logging from pydgens.solvers.alsolver.",
+    )
     return parser.parse_args()
 
 
@@ -357,7 +367,7 @@ def main():
         print_problem_summary()
         return
 
-    nlgame, op_out, al_out, diag = solve_diagnostic_example()
+    nlgame, op_out, al_out, diag = solve_diagnostic_example(debug_logging=args.debug_logging)
 
     print(
         format_ir_al_summary(
