@@ -29,6 +29,7 @@ import pydgens.ir.altypes as altypes
 logger = logging.getLogger(__name__)
 
 ResidualNormKind = Literal["l1", "l2", "l1_mean", "l2_rms", "linf"]
+JacobianBackendKind = Literal["autodiff", "structured"]
 
 
 @dataclass(frozen=True)
@@ -1073,11 +1074,12 @@ def jacobian_al_residual_flat_structured(
       - stationarity rows: ∂(∇(μᵀD))/∂μ
       - when include_second_order=True, player-local cost Hessian blocks
       - when include_second_order=True, auxiliary-constraint JᵀρJ penalty blocks
+      - when include_second_order=True, nonlinear auxiliary-constraint Hessian blocks
 
-    Nonlinear auxiliary-constraint Hessian terms and nonlinear-dynamics second-order
-    terms are intentionally omitted for now. Therefore this backend is exact for
-    linear dynamics, player-local costs whose curvature is captured by the assembled
-    cost Hessian blocks, and linear auxiliary constraints.
+    Nonlinear-dynamics second-order terms are intentionally omitted for now. Therefore
+    this backend is exact for linear dynamics, player-local costs whose curvature is
+    captured by the assembled cost Hessian blocks, and auxiliary constraints whose
+    first- and second-order terms are captured by `ConstraintStepLinearization.func`.
     """
     if ineq_activation not in {"altro", "none"}:
         raise ValueError(f"Unknown ineq_activation={ineq_activation!r}")
@@ -1879,6 +1881,14 @@ def _validate_newton_step_params(
             raise ValueError(f"{name} must be > 0, got {v}")
 
 
+def _validate_jacobian_backend(jacobian_backend: JacobianBackendKind) -> None:
+    if jacobian_backend not in get_args(JacobianBackendKind):
+        raise ValueError(
+            f"jacobian_backend must be one of {get_args(JacobianBackendKind)}, "
+            f"got {jacobian_backend!r}"
+        )
+
+
 def newton_step_autodiff(
     nlgame: gametypes.NonlinearGameType2,
     op: trajtypes.FixedStepPrimalDualTrajectory,
@@ -1898,6 +1908,7 @@ def newton_step_autodiff(
     ls_tau: float, # = 0.5,
     ls_max_iters: int, # = 20,
     normkind: ResidualNormKind,
+    jacobian_backend: JacobianBackendKind = "autodiff",
 ) -> Tuple[trajtypes.FixedStepPrimalDualTrajectory, altypes.NewtonStepDiag]:
     """
     Perform one Newton step on the packed augmented-Lagrangian residual system G(z)=0.
@@ -1905,15 +1916,17 @@ def newton_step_autodiff(
     Take one Newton step for the augmented-Lagrangian residual system G(z)=0.
 
     This routine forms the packed decision vector z from the current primal-dual trajectory,
-    computes the residual g = G(z) and its Jacobian H = ∂G/∂z via autodiff, solves the
-    damped linear system for a Newton direction, then applies an Armijo-style backtracking
-    line search on the residual norm to select a step size.
+    computes the residual g = G(z) and its Jacobian H = ∂G/∂z, solves the damped
+    linear system for a Newton direction, then applies an Armijo-style backtracking
+    line search on the residual norm to select a step size. By default H is built
+    with autodiff for maximum generality. The experimental "structured" backend can
+    be selected for problem classes covered by `jacobian_al_residual_flat_structured`.
 
     High-level procedure
     --------------------
     1) Pack decision variables: z0 = pack_decision_vars(op)
     2) Evaluate residual:        g0 = G(z0)
-    3) Autodiff Jacobian:        H0 = dG/dz |_{z0}
+    3) Jacobian:                 H0 = dG/dz |_{z0}
     4) Solve for direction:      (H0 + reg I) dz = -g0  (Tikhonov regularization)
     5) Backtracking line search: choose alpha to reduce ||G(z0 + alpha dz)||_2
     6) If accepted: update z and unpack op_new
@@ -1961,6 +1974,11 @@ def newton_step_autodiff(
         Norm used for the residual merit function during line search.
         - "l1" uses ||g||₁ / len(g) (matches ALGames.jl convention),
         - "l2" uses ||g||₂.
+    jacobian_backend : {"autodiff", "structured"}
+        Backend used to assemble H = ∂G/∂z. The structured backend is faster on
+        tested linear-dynamics problems with assembled cost/constraint curvature,
+        but is not yet a universal replacement for autodiff because nonlinear
+        dynamics second-order terms are not assembled.
 
 
     Returns
@@ -1993,6 +2011,7 @@ def newton_step_autodiff(
     _validate_newton_step_params(
         step_rtol=step_rtol, step_atol=step_atol
     )
+    _validate_jacobian_backend(jacobian_backend)
 
     # Ensure time grids align (prevents subtle bugs)
     if nlgame.tg != op.tg:
@@ -2003,8 +2022,9 @@ def newton_step_autodiff(
     z0 = jnp.asarray(z0)
     if debug_enabled:
         logger.debug(
-            "Newton step start call=%d z_shape=%s x_shape=%s u_shape=%s l_shape=%s",
+            "Newton step start call=%d jacobian_backend=%s z_shape=%s x_shape=%s u_shape=%s l_shape=%s",
             step_call_id,
+            jacobian_backend,
             _debug_shape(z0),
             _debug_shape(op.xs),
             _debug_shape(op.us),
@@ -2056,15 +2076,29 @@ def newton_step_autodiff(
 
 
     # --- jacobian of augmented lagrangian residual used for root finding ---
-    H0 = jacobian_al_residual_flat_autodiff(
-        nlgame,
-        z0,
-        op,
-        alstate,
-        discretize_method=discretize_method,
-        ineq_activation=ineq_activation,
-        mode="jacfwd",
-    )
+    if jacobian_backend == "autodiff":
+        H0 = jacobian_al_residual_flat_autodiff(
+            nlgame,
+            z0,
+            op,
+            alstate,
+            discretize_method=discretize_method,
+            ineq_activation=ineq_activation,
+            mode="jacfwd",
+        )
+    elif jacobian_backend == "structured":
+        H0 = jacobian_al_residual_flat_structured(
+            nlgame,
+            z0,
+            op,
+            alstate,
+            discretize_method=discretize_method,
+            ineq_activation=ineq_activation,
+            include_second_order=True,
+        )
+    else:
+        # Defensive guard for callers that bypass the earlier validation.
+        raise ValueError(f"Unknown jacobian_backend={jacobian_backend!r}")
 
     # --- solve for step direction of decision vars for finding root of AL residual ---
     sol = solve_newton_system_tikhonov(H0, g0, 
@@ -2207,6 +2241,7 @@ def newton_solve_stationarity_autodiff(
     ls_beta: float,  # = 0.25,
     ls_max_iters: int,  # = 20,
     normkind: ResidualNormKind,  # = "l1_mean",
+    jacobian_backend: JacobianBackendKind = "autodiff",
     # bookkeeping
     return_last_accepted: bool = True,
 ) -> Tuple[trajtypes.FixedStepPrimalDualTrajectory, altypes.StationarityNewtonDiag]:
@@ -2214,7 +2249,7 @@ def newton_solve_stationarity_autodiff(
     Newton-like inner solve for the AL inner loop that targets *stationarity + dynamics feasibility*,
     in the spirit of ALGames.jl.
 
-    The Newton step direction is computed from the packed residual system G(z)=0 (via autodiff),
+    The Newton step direction is computed from the packed residual system G(z)=0,
     but termination is based on two L∞ metrics evaluated at the current trajectory:
         opt_vio_inf = optimality_violation_inf(...)  <= opt_tol
         dyn_vio_inf = max(abs(D(X,U)))               <= dyn_tol
@@ -2275,6 +2310,8 @@ def newton_solve_stationarity_autodiff(
         Maximum consecutive rejected steps before terminating.
     normkind : ResidualNormKind
         Merit norm used for tracking/line-searching (e.g., "l1_mean" to match ALGames).
+    jacobian_backend : {"autodiff", "structured"}
+        Backend forwarded to `newton_step_autodiff` for H = ∂G/∂z assembly.
 
     Other parameters are forwarded to `newton_step_autodiff`.
 
@@ -2297,19 +2334,21 @@ def newton_solve_stationarity_autodiff(
         raise ValueError(f"max_iters must be int >= 0, got {max_iters}")
     if not isinstance(max_rejects, int) or max_rejects < 0:
         raise ValueError(f"max_rejects must be int >= 0, got {max_rejects}")
+    _validate_jacobian_backend(jacobian_backend)
 
     debug_enabled = logger.isEnabledFor(logging.DEBUG)
     solve_call_id = _next_debug_call_id("newton_solve_stationarity_autodiff")
     solve_t0 = time.perf_counter() if debug_enabled else 0.0
     if debug_enabled:
         logger.debug(
-            "Newton solve start call=%d max_iters=%d max_rejects=%d opt_tol=%.3g dyn_tol=%.3g norm=%s",
+            "Newton solve start call=%d max_iters=%d max_rejects=%d opt_tol=%.3g dyn_tol=%.3g norm=%s jacobian_backend=%s",
             solve_call_id,
             max_iters,
             max_rejects,
             float(opt_tol),
             float(dyn_tol),
             normkind,
+            jacobian_backend,
         )
 
     op = op0
@@ -2437,6 +2476,7 @@ def newton_solve_stationarity_autodiff(
             ls_beta=ls_beta,
             ls_max_iters=ls_max_iters,
             normkind=normkind,
+            jacobian_backend=jacobian_backend,
         )
 
         # update solver history
@@ -2842,6 +2882,7 @@ def al_solve_autodiff(
     ls_beta: float = 0.25,
     ls_max_iters: int = 20,
     normkind: ResidualNormKind = "l1_mean",
+    jacobian_backend: JacobianBackendKind = "autodiff",
 ) -> Tuple[trajtypes.FixedStepPrimalDualTrajectory, altypes.JointAugmentedLagrangianState, altypes.ALSolverDiag]:
     """
     Solve a constrained dynamic game using an Augmented Lagrangian (AL) outer loop with a
@@ -2998,27 +3039,29 @@ def al_solve_autodiff(
 
     Notes
     -----
-    - This implementation uses autodiff Jacobians and dense linear solves, so it is intended
-    for correctness and small problems. A production implementation typically exploits
-    block sparsity and structured solves.
+    - This implementation uses dense linear solves. By default it uses autodiff Jacobians
+    for correctness and small-problem generality, while `jacobian_backend="structured"`
+    opts into the experimental structured Jacobian assembler.
     - Because the inner solve uses line search on ||G||, it is possible to satisfy feasibility
     while stalling slightly above `residual_tol` in float32; choose tolerances accordingly.
     """
 
     if nlgame.tg != op0.tg:
         raise ValueError(f"TimeGrid mismatch: nlgame.tg={nlgame.tg} vs op0.tg={op0.tg}")
+    _validate_jacobian_backend(jacobian_backend)
 
     debug_enabled = logger.isEnabledFor(logging.DEBUG)
     al_call_id = _next_debug_call_id("al_solve_autodiff")
     al_t0 = time.perf_counter() if debug_enabled else 0.0
     if debug_enabled:
         logger.debug(
-            "AL outer solve start call=%d max_outer_iters=%d newton_max_iters=%d rho_increase=%.6g rho_max=%.6g",
+            "AL outer solve start call=%d max_outer_iters=%d newton_max_iters=%d rho_increase=%.6g rho_max=%.6g jacobian_backend=%s",
             al_call_id,
             max_iters,
             newton_max_iters,
             rho_increase,
             rho_max,
+            jacobian_backend,
         )
 
     op = op0
@@ -3059,6 +3102,7 @@ def al_solve_autodiff(
             ls_beta = ls_beta,
             ls_max_iters = ls_max_iters,
             normkind = normkind,
+            jacobian_backend = jacobian_backend,
             return_last_accepted = True,
         )
 

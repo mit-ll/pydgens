@@ -2466,6 +2466,46 @@ def test_jacobian_al_residual_flat_structured_constraint_heavy_warm_perf(benchma
     benchmark(run)
 
 
+def _benchmark_newton_step_constraint_heavy(benchmark, *, jacobian_backend):
+    nlgame, op, alstate = _make_constraint_heavy_residual_problem(nt=8)
+
+    def run():
+        op_out, diag = pdg_alsolver.newton_step_autodiff(
+            nlgame,
+            op,
+            alstate,
+            step_rtol=1e-7,
+            step_atol=1e-8,
+            discretize_method="euler",
+            ineq_activation="altro",
+            reg0=1e-6,
+            reg1_min=1e-6,
+            reg_increase=10.0,
+            reg_max=1e8,
+            reg_max_iters=64,
+            ls_alpha0=1.0,
+            ls_tau=0.5,
+            ls_beta=0.25,
+            ls_max_iters=20,
+            normkind="l1_mean",
+            jacobian_backend=jacobian_backend,
+        )
+        assert diag.solve_ok
+        return jnp.asarray(op_out.xs).block_until_ready()
+
+    benchmark(run)
+
+
+@pytest.mark.benchmark(group="alsolver-newton-step-constraints-001")
+def test_newton_step_autodiff_constraint_heavy_autodiff_jacobian_warm_perf(benchmark):
+    _benchmark_newton_step_constraint_heavy(benchmark, jacobian_backend="autodiff")
+
+
+@pytest.mark.benchmark(group="alsolver-newton-step-constraints-001")
+def test_newton_step_autodiff_constraint_heavy_structured_jacobian_warm_perf(benchmark):
+    _benchmark_newton_step_constraint_heavy(benchmark, jacobian_backend="structured")
+
+
 # -------------------------
 # pack_al_residual_1d
 # -------------------------
@@ -4304,6 +4344,108 @@ def test_newton_step_autodiff_handles_nonfinite_residual(monkeypatch):
     assert diag.solve_ok is False
     assert diag.accepted is False
 
+
+def test_newton_step_autodiff_can_use_structured_jacobian_backend(monkeypatch):
+    tg = TimeGrid(nt=3, dt=0.1, t0=0.0)
+    op = SimpleNamespace(tg=tg)
+    nlgame = SimpleNamespace(tg=tg)
+    alstate = SimpleNamespace()
+
+    calls = {"structured": 0, "autodiff": 0}
+    z0 = jnp.array([1.0, 2.0], dtype=jnp.float32)
+    g0 = jnp.array([3.0, 4.0], dtype=jnp.float32)
+    H_struct = 2.0 * jnp.eye(2, dtype=jnp.float32)
+    tiny = jnp.array([1e-20, 0.0], dtype=jnp.float32)
+
+    monkeypatch.setattr(pdg_alsolver, "pack_decision_vars_1d", lambda op_: z0)
+    monkeypatch.setattr(
+        pdg_alsolver,
+        "compute_al_residual_flat_from_decision_vars",
+        lambda *args, **kwargs: g0,
+    )
+
+    def fake_autodiff(*args, **kwargs):
+        calls["autodiff"] += 1
+        raise AssertionError("autodiff backend should not be used")
+
+    def fake_structured(*args, **kwargs):
+        calls["structured"] += 1
+        assert kwargs["discretize_method"] == "euler"
+        assert kwargs["ineq_activation"] == "none"
+        assert kwargs["include_second_order"] is True
+        return H_struct
+
+    def fake_solve(H, g, **kwargs):
+        np.testing.assert_allclose(np.asarray(H), np.asarray(H_struct))
+        np.testing.assert_allclose(np.asarray(g), np.asarray(g0))
+        return altypes.RegularizedSolveResult(dz=tiny, reg=0.0, ok=True)
+
+    monkeypatch.setattr(pdg_alsolver, "jacobian_al_residual_flat_autodiff", fake_autodiff)
+    monkeypatch.setattr(pdg_alsolver, "jacobian_al_residual_flat_structured", fake_structured)
+    monkeypatch.setattr(pdg_alsolver, "solve_newton_system_tikhonov", fake_solve)
+    monkeypatch.setattr(
+        pdg_alsolver,
+        "backtracking_linesearch_armijo",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("tiny step should not line-search")),
+    )
+
+    op_new, diag = pdg_alsolver.newton_step_autodiff(
+        nlgame,
+        op,
+        alstate,
+        step_rtol=1e-7,
+        step_atol=1e-8,
+        discretize_method="euler",
+        ineq_activation="none",
+        reg0=0.0,
+        reg1_min=1e-12,
+        reg_increase=10.0,
+        reg_max=1e8,
+        reg_max_iters=64,
+        ls_alpha0=1.0,
+        ls_tau=0.5,
+        ls_beta=0.25,
+        ls_max_iters=20,
+        normkind="l1_mean",
+        jacobian_backend="structured",
+    )
+
+    assert op_new is op
+    assert diag.accepted
+    assert calls == {"structured": 1, "autodiff": 0}
+
+
+def test_newton_step_autodiff_rejects_invalid_jacobian_backend(monkeypatch):
+    nlgame, op, alstate = _stub_game_and_op_same_tg()
+    monkeypatch.setattr(
+        pdg_alsolver,
+        "pack_decision_vars_1d",
+        lambda *_: (_ for _ in ()).throw(AssertionError("should not call pack")),
+    )
+
+    with pytest.raises(ValueError, match="jacobian_backend"):
+        pdg_alsolver.newton_step_autodiff(
+            nlgame,
+            op,
+            alstate,
+            step_rtol=1e-7,
+            step_atol=1e-8,
+            discretize_method="euler",
+            ineq_activation="none",
+            reg0=0.0,
+            reg1_min=1e-6,
+            reg_increase=10.0,
+            reg_max=1e2,
+            reg_max_iters=10,
+            ls_alpha0=1.0,
+            ls_tau=0.5,
+            ls_beta=0.25,
+            ls_max_iters=10,
+            normkind="l1_mean",
+            jacobian_backend="not-a-backend",
+        )
+
+
 def _stub_game_op_alstate_for_solve():
     tg = TimeGrid(nt=4, dt=0.1, t0=0.0)
     nlgame = SimpleNamespace(tg=tg)
@@ -4553,6 +4695,67 @@ def test_newton_solve_stationarity_metrics_reuse_structured_residual_at_start(mo
     assert diag.converged
     assert diag.reason == "opt_dyn_tol_at_start"
     assert calls == {"residual_struct": 1}
+
+
+def test_newton_solve_stationarity_forwards_jacobian_backend_to_step(monkeypatch):
+    nlgame, op0, alstate = _stub_game_op_alstate_for_stationarity()
+    seen = {"jacobian_backend": None}
+
+    monkeypatch.setattr(
+        pdg_alsolver,
+        "compute_al_residual_struct_from_traj",
+        lambda *a, **k: _stationarity_metrics_residual(opt=1.0, dyn=0.0),
+    )
+    monkeypatch.setattr(
+        pdg_alsolver.systypes,
+        "residual_discrete_dynamics_trajectory",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("should use residual struct")),
+    )
+
+    def fake_step(nlgame_, op_, alstate_, **kwargs):
+        seen["jacobian_backend"] = kwargs["jacobian_backend"]
+        diag = altypes.NewtonStepDiag(
+            accepted=False,
+            alpha=0.0,
+            g_norm0=1.0,
+            g_norm_trial=1.0,
+            step_norm=1.0,
+            reg=0.0,
+            ls_iters=1,
+            solve_ok=True,
+        )
+        return op_, diag
+
+    monkeypatch.setattr(pdg_alsolver, "newton_step_autodiff", fake_step)
+
+    op_out, diag = pdg_alsolver.newton_solve_stationarity_autodiff(
+        nlgame,
+        op0,
+        alstate,
+        discretize_method="rk2",
+        ineq_activation="altro",
+        opt_tol=1e-3,
+        dyn_tol=1e-3,
+        max_iters=1,
+        max_rejects=5,
+        step_rtol=1e-7,
+        step_atol=1e-8,
+        reg0=0.0,
+        reg1_min=1e-12,
+        reg_increase=10.0,
+        reg_max=1e8,
+        reg_max_iters=64,
+        ls_alpha0=1.0,
+        ls_tau=0.5,
+        ls_beta=0.25,
+        ls_max_iters=20,
+        normkind="l1_mean",
+        jacobian_backend="structured",
+    )
+
+    assert op_out is op0
+    assert diag.reason == "max_iters"
+    assert seen == {"jacobian_backend": "structured"}
 
 
 def test_newton_solve_stationarity_reject_streak_returns_last_accepted(monkeypatch):
