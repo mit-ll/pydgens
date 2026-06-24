@@ -2652,6 +2652,71 @@ def _make_linear_dynamics_only_al_problem(*, nt=5, dtype=jnp.float32):
     return nlgame, op, alstate
 
 
+def _make_nonlinear_dynamics_only_al_problem(*, nt=5, dtype=jnp.float32):
+    tg = TimeGrid(nt=nt, dt=0.1, t0=0.0)
+    K = tg.nsteps
+    nx = 2
+    u_splits = jnp.array([1, 1], dtype=jnp.int32)
+    N = int(u_splits.shape[0])
+    nu = int(np.sum(np.asarray(u_splits)))
+
+    def f_cont(t, x, u):
+        return jnp.array(
+            [
+                x[1] + 0.2 * x[0] ** 2 + 0.1 * u[0] * u[1],
+                -0.4 * x[0] + jnp.sin(x[1]) + u[0] ** 2 + 0.3 * x[0] * u[1],
+            ],
+            dtype=x.dtype,
+        )
+
+    cs = SampledContinuousSystemType1(tg=tg, dynamics=f_cont, nx=nx, nu=nu)
+
+    def make_zero_cost():
+        def running(t, x, u_i):
+            return jnp.array(0.0, dtype=x.dtype)
+
+        def terminal(t, x):
+            return jnp.array(0.0, dtype=x.dtype)
+
+        return PlayerCostSpecContinuous(
+            running=running,
+            terminal=terminal,
+            control_domain=CostControlDomain.LOCAL,
+            control_coupling=CostControlStructure.LOCAL_ONLY,
+        )
+
+    constraints = GameConstraintGridMap(ineq_blocks=(), eq_blocks=())
+    nlgame = NonlinearGameType2(
+        cs=cs,
+        N=N,
+        costs=[make_zero_cost() for _ in range(N)],
+        constraints=constraints,
+        u_splits=u_splits,
+    )
+
+    xs = jnp.array(
+        [
+            [0.2, -0.1],
+            [0.4, 0.15],
+            [-0.05, 0.3],
+            [0.25, -0.2],
+            [0.1, 0.05],
+        ][:nt],
+        dtype=dtype,
+    )
+    us = jnp.linspace(-0.35, 0.45, K * nu, dtype=dtype).reshape(K, nu)
+    ls = jnp.linspace(0.2, 1.1, K * N * nx, dtype=dtype).reshape(K, N, nx)
+    op = FixedStepPrimalDualTrajectory(tg=tg, xs=xs, us=us, ls=ls)
+    alstate = altypes.JointAugmentedLagrangianState(
+        lam_ineq=jnp.zeros((0,), dtype=dtype),
+        rho_ineq=jnp.zeros((0,), dtype=dtype),
+        lam_eq=jnp.zeros((0,), dtype=dtype),
+        rho_eq=jnp.zeros((0,), dtype=dtype),
+    )
+
+    return nlgame, op, alstate
+
+
 def _make_linear_dynamics_quadratic_cost_al_problem(*, nt=5, dtype=jnp.float32):
     tg = TimeGrid(nt=nt, dt=0.1, t0=0.0)
     K = tg.nsteps
@@ -2973,6 +3038,36 @@ def test_jacobian_al_residual_flat_structured_dynamics_matches_autodiff_on_linea
 
     assert H_struct.shape == H_ad.shape
     np.testing.assert_allclose(np.asarray(H_struct), np.asarray(H_ad), rtol=2e-5, atol=2e-5)
+
+
+def test_jacobian_al_residual_flat_structured_nonlinear_dynamics_matches_autodiff():
+    """
+    Nonlinear dynamics require μ-weighted second-order f_d terms in stationarity rows.
+    """
+    nlgame, op, alstate = _make_nonlinear_dynamics_only_al_problem(nt=5, dtype=jnp.float32)
+    z = pdg_alsolver.pack_decision_vars_1d(op)
+
+    H_ad = pdg_alsolver.jacobian_al_residual_flat_autodiff(
+        nlgame,
+        z,
+        op,
+        alstate,
+        discretize_method="euler",
+        ineq_activation="none",
+        mode="jacfwd",
+    )
+    H_struct = pdg_alsolver.jacobian_al_residual_flat_structured(
+        nlgame,
+        z,
+        op,
+        alstate,
+        discretize_method="euler",
+        ineq_activation="none",
+        include_second_order=True,
+    )
+
+    assert H_struct.shape == H_ad.shape
+    np.testing.assert_allclose(np.asarray(H_struct), np.asarray(H_ad), rtol=7e-5, atol=7e-5)
 
 
 def test_jacobian_al_residual_flat_structured_cost_curvature_matches_autodiff_on_quadratic_problem():

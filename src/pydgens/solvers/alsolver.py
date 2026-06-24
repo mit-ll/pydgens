@@ -1021,6 +1021,37 @@ def _terminal_cost_hessian(
     return jax.hessian(lambda x_: termfn_i(t, x_))(x)
 
 
+@partial(jax.jit, static_argnums=(0, 1))
+def _discrete_dynamics_weighted_hessians_trajectory(
+    cs: systypes.SampledContinuousSystemType1,
+    method: str,
+    ts: jnp.ndarray,
+    xs: jnp.ndarray,
+    us: jnp.ndarray,
+    mus: jnp.ndarray,
+) -> jnp.ndarray:
+    """
+    Batch Hessians of μᵀ f_d(t, x, u) with respect to concatenated [x, u].
+
+    The returned array has shape `(K, N, nx + nu, nx + nu)`: one Hessian per
+    time step and player. These blocks are the nonlinear-dynamics curvature
+    terms needed when differentiating `A_k.T @ μ_k` and `B_k.T @ μ_k`.
+    """
+    fd = systypes.make_discrete_dynamics_step_map(cs, method=method)
+    nx = xs.shape[1]
+
+    def hess_one(t, x, u, mu):
+        def weighted_dynamics(xu):
+            return mu @ fd(t, xu[:nx], xu[nx:])
+
+        return jax.hessian(weighted_dynamics)(jnp.concatenate([x, u]))
+
+    def hess_step(t, x, u, mus_k):
+        return jax.vmap(lambda mu: hess_one(t, x, u, mu))(mus_k)
+
+    return jax.vmap(hess_step, in_axes=(0, 0, 0, 0))(ts, xs, us, mus)
+
+
 @partial(jax.jit, static_argnums=(0, 4))
 def _step_constraint_hessians(
     func: Callable,
@@ -1072,14 +1103,14 @@ def jacobian_al_residual_flat_structured(
     This backend currently assembles:
       - feasibility rows: ∂D/∂X and ∂D/∂U
       - stationarity rows: ∂(∇(μᵀD))/∂μ
+      - when include_second_order=True, nonlinear-dynamics Hessian blocks
       - when include_second_order=True, player-local cost Hessian blocks
       - when include_second_order=True, auxiliary-constraint JᵀρJ penalty blocks
       - when include_second_order=True, nonlinear auxiliary-constraint Hessian blocks
 
-    Nonlinear-dynamics second-order terms are intentionally omitted for now. Therefore
-    this backend is exact for linear dynamics, player-local costs whose curvature is
-    captured by the assembled cost Hessian blocks, and auxiliary constraints whose
-    first- and second-order terms are captured by `ConstraintStepLinearization.func`.
+    With include_second_order=True, this backend is intended to match the autodiff
+    Jacobian for `SampledContinuousSystemType1` problems whose cost and constraint
+    callables expose their curvature through JAX.
     """
     if ineq_activation not in {"altro", "none"}:
         raise ValueError(f"Unknown ineq_activation={ineq_activation!r}")
@@ -1220,13 +1251,64 @@ def jacobian_al_residual_flat_structured(
                     H_np[r_u, mu_col(k, i, b)] += B_np[k, b, u_joint]
 
     if include_second_order:
+        ts = timetypes.compute_ts(op.tg).astype(op.xs.dtype)
+
+        # Nonlinear dynamics curvature. The first-order stationarity terms above
+        # place derivatives with respect to μ. When f_d is nonlinear, the blocks
+        # A_k.T @ μ_k and B_k.T @ μ_k also vary with x_k and u_k. Differentiating
+        # the scalar μ_k.T @ f_d(t_k, x_k, u_k) gives exactly the required
+        # Hessian with respect to [x_k, u_k].
+        if op.ls.size and bool(jnp.any(op.ls != 0.0)):
+            H_dyn_all = np.asarray(
+                jax.device_get(
+                    _discrete_dynamics_weighted_hessians_trajectory(
+                        nlgame.cs,
+                        discretize_method,
+                        ts[:-1],
+                        op.xs[:-1],
+                        op.us,
+                        op.ls,
+                    )
+                )
+            )
+
+            for i in range(N):
+                u0_i = int(u_starts[i])
+                nui = int(u_splits[i])
+                for k in range(K):
+                    H_dyn = H_dyn_all[k, i]
+                    H_xx = H_dyn[:nx, :nx]
+                    H_xu = H_dyn[:nx, nx:]
+                    H_ux = H_dyn[nx:, :nx]
+                    H_uu = H_dyn[nx:, nx:]
+
+                    # x_k stationarity exists only when k > 0 because x0 is fixed
+                    # and omitted from both residual rows and decision columns.
+                    if k > 0:
+                        j_tail = k - 1
+                        for a in range(nx):
+                            r_x = player_x_row0[i] + j_tail * nx + a
+                            for b in range(nx):
+                                H_np[r_x, x_col(j_tail, b)] += H_xx[a, b]
+                            for b in range(nu):
+                                H_np[r_x, u_col(k, b)] += H_xu[a, b]
+
+                    # Player i contributes only its local-control stationarity rows,
+                    # but those rows may depend on the full joint control vector.
+                    for c in range(nui):
+                        u_joint = u0_i + c
+                        r_u = player_u_row0[i] + k * nui + c
+                        if k > 0:
+                            for b in range(nx):
+                                H_np[r_u, x_col(k - 1, b)] += H_ux[u_joint, b]
+                        for b in range(nu):
+                            H_np[r_u, u_col(k, b)] += H_uu[u_joint, b]
+
         # Cost curvature is player-local in the current AL formulation. For each
         # stage, we differentiate running_i(t, x_k, u_{k,i}) with respect to the
         # concatenated vector [x_k, u_{k,i}], then place the resulting Hessian into
         # the appropriate stationarity rows/decision columns. This captures x-x,
         # x-u, u-x, and u-u cost curvature, including mixed state/control terms.
-        ts = timetypes.compute_ts(op.tg).astype(op.xs.dtype)
-
         for i in range(N):
             cost_i = nlgame.costs[i]
             u0_i = int(u_starts[i])
