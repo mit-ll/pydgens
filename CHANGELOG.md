@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `alsolver.py` Added an experimental structured Jacobian backend for AL residual Jacobians, including dynamics feasibility blocks, dynamics-multiplier stationarity blocks, nonlinear-dynamics curvature blocks, player-local cost Hessian blocks, and auxiliary-constraint curvature blocks.
 - `alsolver.py` Added a backend-dispatching `jacobian_al_residual_flat` entry point for selecting autodiff or structured AL residual Jacobian assembly.
 - `test_alsolver.py` Added correctness and benchmark coverage comparing the experimental structured Jacobian backend against the autodiff backend across dynamics-only, nonlinear-dynamics, quadratic-cost, linear-constraint, and nonlinear-constraint cases.
+- `test_constrained_integrators.py` Added example-level benchmarks comparing structured and autodiff AL Jacobian backends on the constrained-integrators frontend example.
 
 
 ### Changed
