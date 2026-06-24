@@ -1490,7 +1490,7 @@ def jacobian_al_residual_flat(
     *,
     discretize_method: str = "rk2",
     ineq_activation: str = "altro",
-    backend: JacobianBackendKind = "autodiff",
+    backend: JacobianBackendKind = "structured",
     autodiff_mode: Literal["jacfwd", "jacrev"] = "jacfwd",
     structured_include_second_order: bool = True,
 ) -> jnp.ndarray:
@@ -2036,7 +2036,7 @@ def newton_step(
     ls_tau: float, # = 0.5,
     ls_max_iters: int, # = 20,
     normkind: ResidualNormKind,
-    jacobian_backend: JacobianBackendKind = "autodiff",
+    jacobian_backend: JacobianBackendKind = "structured",
 ) -> Tuple[trajtypes.FixedStepPrimalDualTrajectory, altypes.NewtonStepDiag]:
     """
     Perform one Newton step on the packed augmented-Lagrangian residual system G(z)=0.
@@ -2336,13 +2336,13 @@ def newton_step_autodiff(*args, **kwargs) -> Tuple[trajtypes.FixedStepPrimalDual
     Backward-compatible alias for `newton_step`.
 
     Historically this function always built H = ∂G/∂z with brute-force autodiff.
-    It now delegates to `newton_step`, which supports multiple Jacobian backends
-    through `jacobian_backend` while preserving the old default behavior.
+    It now delegates to `newton_step`, which uses the structured Jacobian backend
+    by default. Pass `jacobian_backend="autodiff"` to elect the legacy pathway.
     """
     return newton_step(*args, **kwargs)
 
 
-def newton_solve_stationarity_autodiff(
+def newton_solve_stationarity(
     nlgame: gametypes.NonlinearGameType2,
     op0: trajtypes.FixedStepPrimalDualTrajectory,
     alstate: altypes.JointAugmentedLagrangianState,
@@ -2367,7 +2367,7 @@ def newton_solve_stationarity_autodiff(
     ls_beta: float,  # = 0.25,
     ls_max_iters: int,  # = 20,
     normkind: ResidualNormKind,  # = "l1_mean",
-    jacobian_backend: JacobianBackendKind = "autodiff",
+    jacobian_backend: JacobianBackendKind = "structured",
     # bookkeeping
     return_last_accepted: bool = True,
 ) -> Tuple[trajtypes.FixedStepPrimalDualTrajectory, altypes.StationarityNewtonDiag]:
@@ -2409,7 +2409,7 @@ def newton_solve_stationarity_autodiff(
         stay consistent across non-finite residuals, rejected steps, stalls, and max-iteration
         exits.
 
-    The Newton step itself is still computed from the same autodiff Jacobian of `G(z)`.
+    The Newton step itself is still computed from the same packed residual `G(z)`.
     The important change is the meaning of "inner convergence": it is no longer "make the
     whole packed residual tiny"; it is "satisfy the stationarity and dynamics-feasibility
     conditions that the AL outer loop consumes."
@@ -2463,7 +2463,7 @@ def newton_solve_stationarity_autodiff(
     _validate_jacobian_backend(jacobian_backend)
 
     debug_enabled = logger.isEnabledFor(logging.DEBUG)
-    solve_call_id = _next_debug_call_id("newton_solve_stationarity_autodiff")
+    solve_call_id = _next_debug_call_id("newton_solve_stationarity")
     solve_t0 = time.perf_counter() if debug_enabled else 0.0
     if debug_enabled:
         logger.debug(
@@ -2732,6 +2732,20 @@ def newton_solve_stationarity_autodiff(
     return (op_last_accepted if return_last_accepted else op), diag
 
 
+def newton_solve_stationarity_autodiff(
+    *args,
+    **kwargs,
+) -> Tuple[trajtypes.FixedStepPrimalDualTrajectory, altypes.StationarityNewtonDiag]:
+    """
+    Backward-compatible alias for `newton_solve_stationarity`.
+
+    The preferred function name no longer encodes a Jacobian backend. The structured
+    backend is now the default; pass `jacobian_backend="autodiff"` to elect the
+    legacy brute-force autodiff Jacobian pathway.
+    """
+    return newton_solve_stationarity(*args, **kwargs)
+
+
 def dual_ascent_update(
     constraints: contypes.GameConstraintGridMap,
     op: trajtypes.FixedStepPrimalDualTrajectory,
@@ -2977,7 +2991,7 @@ def _collect_constraint_stacks_from_linearizations(
     return c_ineq, c_eq
 
 
-def al_solve_autodiff(
+def al_solve(
     nlgame: gametypes.NonlinearGameType2,
     op0: trajtypes.FixedStepPrimalDualTrajectory,
     alstate0: altypes.JointAugmentedLagrangianState,
@@ -3008,7 +3022,7 @@ def al_solve_autodiff(
     ls_beta: float = 0.25,
     ls_max_iters: int = 20,
     normkind: ResidualNormKind = "l1_mean",
-    jacobian_backend: JacobianBackendKind = "autodiff",
+    jacobian_backend: JacobianBackendKind = "structured",
 ) -> Tuple[trajtypes.FixedStepPrimalDualTrajectory, altypes.JointAugmentedLagrangianState, altypes.ALSolverDiag]:
     """
     Solve a constrained dynamic game using an Augmented Lagrangian (AL) outer loop with a
@@ -3165,9 +3179,9 @@ def al_solve_autodiff(
 
     Notes
     -----
-    - This implementation uses dense linear solves. By default it uses autodiff Jacobians
-    for correctness and small-problem generality, while `jacobian_backend="structured"`
-    opts into the experimental structured Jacobian assembler.
+    - This implementation uses dense linear solves. By default it uses the structured
+    Jacobian backend; pass `jacobian_backend="autodiff"` to elect the brute-force
+    autodiff Jacobian pathway for validation or small-problem comparison.
     - Because the inner solve uses line search on ||G||, it is possible to satisfy feasibility
     while stalling slightly above `residual_tol` in float32; choose tolerances accordingly.
     """
@@ -3177,7 +3191,7 @@ def al_solve_autodiff(
     _validate_jacobian_backend(jacobian_backend)
 
     debug_enabled = logger.isEnabledFor(logging.DEBUG)
-    al_call_id = _next_debug_call_id("al_solve_autodiff")
+    al_call_id = _next_debug_call_id("al_solve")
     al_t0 = time.perf_counter() if debug_enabled else 0.0
     if debug_enabled:
         logger.debug(
@@ -3208,7 +3222,7 @@ def al_solve_autodiff(
             )
 
         # ---- 1) inner solve: newton root finding of G=0 with fixed (λ,ρ) ----
-        op, newton_diag = newton_solve_stationarity_autodiff(
+        op, newton_diag = newton_solve_stationarity(
             nlgame, op, alstate,
             discretize_method = discretize_method,
             ineq_activation = ineq_activation,
@@ -3334,3 +3348,17 @@ def al_solve_autodiff(
             time.perf_counter() - al_t0,
         )
     return op, alstate, diag
+
+
+def al_solve_autodiff(
+    *args,
+    **kwargs,
+) -> Tuple[trajtypes.FixedStepPrimalDualTrajectory, altypes.JointAugmentedLagrangianState, altypes.ALSolverDiag]:
+    """
+    Backward-compatible alias for `al_solve`.
+
+    The preferred function name no longer encodes a Jacobian backend. The structured
+    backend is now the default; pass `jacobian_backend="autodiff"` to elect the
+    legacy brute-force autodiff Jacobian pathway.
+    """
+    return al_solve(*args, **kwargs)

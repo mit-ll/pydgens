@@ -3119,7 +3119,18 @@ def test_jacobian_al_residual_flat_dispatches_to_selected_backend(monkeypatch):
         structured_include_second_order=False,
     )
     np.testing.assert_allclose(np.asarray(H), np.asarray(H_structured))
-    assert calls == {"autodiff": 1, "structured": 1}
+
+    H = pdg_alsolver.jacobian_al_residual_flat(
+        nlgame,
+        z,
+        template_op,
+        alstate,
+        discretize_method="rk2",
+        ineq_activation="altro",
+        structured_include_second_order=False,
+    )
+    np.testing.assert_allclose(np.asarray(H), np.asarray(H_structured))
+    assert calls == {"autodiff": 1, "structured": 2}
 
 
 def test_jacobian_al_residual_flat_structured_cost_curvature_matches_autodiff_on_quadratic_problem():
@@ -4106,6 +4117,7 @@ def test_newton_step_autodiff_rejects_when_linear_solve_fails(monkeypatch):
         ls_beta = 0.25,
         ls_max_iters = 20,
         normkind="l1_mean",
+        jacobian_backend="autodiff",
     )
 
     assert op_new is op
@@ -4143,12 +4155,11 @@ def test_newton_step_autodiff_delegates_to_newton_step(monkeypatch):
         ls_beta=0.25,
         ls_max_iters=20,
         normkind="l1_mean",
-        jacobian_backend="structured",
     )
 
     assert out == expected
     assert seen["args"] == ("nlgame", "op", "alstate")
-    assert seen["kwargs"]["jacobian_backend"] == "structured"
+    assert "jacobian_backend" not in seen["kwargs"]
 
 
 def test_newton_step_autodiff_accepts_noop_if_step_tiny(monkeypatch):
@@ -4189,6 +4200,7 @@ def test_newton_step_autodiff_accepts_noop_if_step_tiny(monkeypatch):
         ls_beta = 0.25,
         ls_max_iters = 20,
         normkind="l1_mean",                                       
+        jacobian_backend="autodiff",
     )
 
     assert op_new is op
@@ -4243,6 +4255,7 @@ def test_newton_step_autodiff_rejects_when_line_search_rejects(monkeypatch):
         ls_beta = 0.25,
         ls_max_iters = 20,
         normkind="l1_mean",
+        jacobian_backend="autodiff",
     )
 
     assert op_new is op
@@ -4303,6 +4316,7 @@ def test_newton_step_autodiff_accepts_and_unpacks_on_success(monkeypatch):
         ls_beta = 0.25,
         ls_max_iters = 20,
         normkind="l1_mean",
+        jacobian_backend="autodiff",
     )
 
     assert op_new == "OP_NEW"
@@ -4529,7 +4543,7 @@ def test_newton_step_autodiff_handles_nonfinite_residual(monkeypatch):
     assert diag.accepted is False
 
 
-def test_newton_step_autodiff_can_use_structured_jacobian_backend(monkeypatch):
+def test_newton_step_autodiff_uses_structured_jacobian_backend_by_default(monkeypatch):
     tg = TimeGrid(nt=3, dt=0.1, t0=0.0)
     op = SimpleNamespace(tg=tg)
     nlgame = SimpleNamespace(tg=tg)
@@ -4591,7 +4605,6 @@ def test_newton_step_autodiff_can_use_structured_jacobian_backend(monkeypatch):
         ls_beta=0.25,
         ls_max_iters=20,
         normkind="l1_mean",
-        jacobian_backend="structured",
     )
 
     assert op_new is op
@@ -4940,6 +4953,47 @@ def test_newton_solve_stationarity_forwards_jacobian_backend_to_step(monkeypatch
     assert op_out is op0
     assert diag.reason == "max_iters"
     assert seen == {"jacobian_backend": "structured"}
+
+
+def test_newton_solve_stationarity_autodiff_delegates_to_newton_solve_stationarity(monkeypatch):
+    expected = ("OP_OUT", "DIAG")
+    seen = {"args": None, "kwargs": None}
+
+    def fake_solve(*args, **kwargs):
+        seen["args"] = args
+        seen["kwargs"] = kwargs
+        return expected
+
+    monkeypatch.setattr(pdg_alsolver, "newton_solve_stationarity", fake_solve)
+
+    out = pdg_alsolver.newton_solve_stationarity_autodiff(
+        "nlgame",
+        "op0",
+        "alstate",
+        discretize_method="rk2",
+        ineq_activation="altro",
+        opt_tol=1e-3,
+        dyn_tol=1e-3,
+        max_iters=1,
+        max_rejects=1,
+        step_rtol=1e-7,
+        step_atol=1e-8,
+        reg0=0.0,
+        reg1_min=1e-12,
+        reg_increase=10.0,
+        reg_max=1e8,
+        reg_max_iters=64,
+        ls_alpha0=1.0,
+        ls_tau=0.5,
+        ls_beta=0.25,
+        ls_max_iters=20,
+        normkind="l1_mean",
+        jacobian_backend="autodiff",
+    )
+
+    assert out == expected
+    assert seen["args"] == ("nlgame", "op0", "alstate")
+    assert seen["kwargs"]["jacobian_backend"] == "autodiff"
 
 
 def test_newton_solve_stationarity_reject_streak_returns_last_accepted(monkeypatch):
@@ -5611,7 +5665,7 @@ def test_al_solve_autodiff_outer_updates_lambda_and_rho(monkeypatch):
         # returns (op, newton_diag)
         return op0, fake_newton_diag
 
-    monkeypatch.setattr(pdg_alsolver, "newton_solve_stationarity_autodiff", fake_newton_solve)
+    monkeypatch.setattr(pdg_alsolver, "newton_solve_stationarity", fake_newton_solve)
 
     # ---- Mock 2: stationarity conditions are nonzero ----
     def fake_grad_aug_lag_traj(*a, **ka):
@@ -5685,6 +5739,84 @@ def test_al_solve_autodiff_outer_updates_lambda_and_rho(monkeypatch):
     assert len(diag.history) == 1
     assert diag.history[0].outer_iter == 0
 
+
+def test_al_solve_forwards_structured_jacobian_backend_by_default(monkeypatch):
+    tg = TimeGrid(nt=3, dt=0.1, t0=0.0)
+    constraints = GameConstraintGridMap(ineq_blocks=(), eq_blocks=())
+    nlgame = SimpleNamespace(tg=tg, constraints=constraints)
+    op0 = FixedStepPrimalDualTrajectory(
+        tg=tg,
+        xs=jnp.zeros((tg.nt, 1), dtype=jnp.float32),
+        us=jnp.zeros((tg.nsteps, 1), dtype=jnp.float32),
+        ls=jnp.zeros((tg.nsteps, 1, 1), dtype=jnp.float32),
+    )
+    al0 = altypes.JointAugmentedLagrangianState(
+        lam_ineq=jnp.zeros((0,), dtype=jnp.float32),
+        rho_ineq=jnp.zeros((0,), dtype=jnp.float32),
+        lam_eq=jnp.zeros((0,), dtype=jnp.float32),
+        rho_eq=jnp.zeros((0,), dtype=jnp.float32),
+    )
+    seen = {"jacobian_backend": None}
+
+    fake_newton_diag = SimpleNamespace(
+        converged=False,
+        iters=1,
+        reason="max_iters",
+        merit_norms=(1.0,),
+        opt_vios=(1.0,),
+        dyn_vios=(1.0,),
+    )
+
+    def fake_newton_solve(*args, **kwargs):
+        seen["jacobian_backend"] = kwargs["jacobian_backend"]
+        return op0, fake_newton_diag
+
+    monkeypatch.setattr(pdg_alsolver, "newton_solve_stationarity", fake_newton_solve)
+
+    op_out, al_out, diag = pdg_alsolver.al_solve(
+        nlgame,
+        op0,
+        al0,
+        max_iters=1,
+        opt_tol=1e-12,
+        dyn_tol=0.0,
+        ineq_tol=0.0,
+        eq_tol=0.0,
+    )
+
+    assert op_out is op0
+    np.testing.assert_allclose(np.asarray(al_out.lam_ineq), np.asarray(al0.lam_ineq))
+    np.testing.assert_allclose(np.asarray(al_out.rho_ineq), np.asarray(al0.rho_ineq))
+    np.testing.assert_allclose(np.asarray(al_out.lam_eq), np.asarray(al0.lam_eq))
+    np.testing.assert_allclose(np.asarray(al_out.rho_eq), np.asarray(al0.rho_eq))
+    assert diag.reason == "max_outer_iters"
+    assert seen == {"jacobian_backend": "structured"}
+
+
+def test_al_solve_autodiff_delegates_to_al_solve(monkeypatch):
+    expected = ("OP_OUT", "AL_OUT", "DIAG")
+    seen = {"args": None, "kwargs": None}
+
+    def fake_al_solve(*args, **kwargs):
+        seen["args"] = args
+        seen["kwargs"] = kwargs
+        return expected
+
+    monkeypatch.setattr(pdg_alsolver, "al_solve", fake_al_solve)
+
+    out = pdg_alsolver.al_solve_autodiff(
+        "nlgame",
+        "op0",
+        "alstate0",
+        max_iters=1,
+        jacobian_backend="autodiff",
+    )
+
+    assert out == expected
+    assert seen["args"] == ("nlgame", "op0", "alstate0")
+    assert seen["kwargs"]["jacobian_backend"] == "autodiff"
+
+
 def test_al_solve_autodiff_rho_caps(monkeypatch):
     tg = TimeGrid(nt=4, dt=0.1, t0=0.0)
 
@@ -5702,7 +5834,7 @@ def test_al_solve_autodiff_rho_caps(monkeypatch):
     )
 
     fake_newton_diag = SimpleNamespace(converged=True, iters=1, reason="residual_tolerance_met", merit_norms=(1.0,), opt_vios=(1.0,), dyn_vios=(1.0,))
-    monkeypatch.setattr(pdg_alsolver, "newton_solve_stationarity_autodiff", lambda *a, **k: (op0, fake_newton_diag))
+    monkeypatch.setattr(pdg_alsolver, "newton_solve_stationarity", lambda *a, **k: (op0, fake_newton_diag))
     def fake_grad_aug_lag_traj(*a, **ka):
         return jnp.ones((1, tg.nt, 2)), jnp.ones((1, tg.nt-1, 1))
     monkeypatch.setattr(pdg_alsolver, "gradient_aug_lagrangian_trajectory", fake_grad_aug_lag_traj)
@@ -5760,7 +5892,7 @@ def test_al_solve_autodiff_converges_early_and_does_not_update_alstate(monkeypat
 
     # inner solve returns a tiny residual norm
     fake_newton_diag = SimpleNamespace(converged=True, iters=2, reason="residual_tolerance_met", merit_norms=(1e-9,), opt_vios=(1e-9,), dyn_vios=(1e-9,))
-    monkeypatch.setattr(pdg_alsolver, "newton_solve_stationarity_autodiff", lambda *a, **k: (op0, fake_newton_diag))
+    monkeypatch.setattr(pdg_alsolver, "newton_solve_stationarity", lambda *a, **k: (op0, fake_newton_diag))
 
     # optimality/stationarity conditions met (smaller than opt_vio but non-zero)
     monkeypatch.setattr(pdg_alsolver, "gradient_aug_lagrangian_trajectory", lambda *a, **k: (1e-9*jnp.ones((N, nt, nx)), 1e-9*jnp.ones((N, nt-1, nu))))
@@ -5840,7 +5972,7 @@ def test_al_solve_autodiff_does_not_converge_if_inner_reports_nonfinite_dyn(monk
 
     monkeypatch.setattr(
         pdg_alsolver,
-        "newton_solve_stationarity_autodiff",
+        "newton_solve_stationarity",
         lambda *a, **k: (op0, fake_newton_diag),
     )
 
