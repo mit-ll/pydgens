@@ -1223,7 +1223,8 @@ def jacobian_al_residual_flat_structured(
     #
     # This first-order slice places derivatives of those expressions with
     # respect to μ. Derivatives with respect to x/u through A_k or B_k are
-    # nonlinear-dynamics curvature terms and are intentionally not assembled yet.
+    # nonlinear-dynamics curvature terms assembled below when second-order
+    # blocks are enabled.
     for i in range(N):
         # State stationarity for decision states x_j, j=1..K.
         for j_tail in range(K):
@@ -1479,6 +1480,51 @@ def jacobian_al_residual_flat_structured(
             add_constraint_penalty_curvature(lin, rho, hess_weights)
 
     return jnp.asarray(H_np)
+
+
+def jacobian_al_residual_flat(
+    nlgame: gametypes.NonlinearGameType2,
+    z: jnp.ndarray,
+    template_op: trajtypes.FixedStepPrimalDualTrajectory,
+    alstate: altypes.JointAugmentedLagrangianState,
+    *,
+    discretize_method: str = "rk2",
+    ineq_activation: str = "altro",
+    backend: JacobianBackendKind = "autodiff",
+    autodiff_mode: Literal["jacfwd", "jacrev"] = "jacfwd",
+    structured_include_second_order: bool = True,
+) -> jnp.ndarray:
+    """
+    Dispatch AL residual Jacobian assembly to the selected backend.
+
+    This is the neutral entry point for H = ∂G/∂z. The backend-specific
+    functions remain available for validation, benchmarking, and direct
+    regression tests, but solver code should generally call this dispatcher.
+    """
+    _validate_jacobian_backend(backend)
+    if backend == "autodiff":
+        return jacobian_al_residual_flat_autodiff(
+            nlgame,
+            z,
+            template_op,
+            alstate,
+            discretize_method=discretize_method,
+            ineq_activation=ineq_activation,
+            mode=autodiff_mode,
+        )
+    if backend == "structured":
+        return jacobian_al_residual_flat_structured(
+            nlgame,
+            z,
+            template_op,
+            alstate,
+            discretize_method=discretize_method,
+            ineq_activation=ineq_activation,
+            include_second_order=structured_include_second_order,
+        )
+
+    # Defensive guard for callers that bypass the validator.
+    raise ValueError(f"Unknown backend={backend!r}")
 
 
 def _validate_reg_params(
@@ -1971,7 +2017,7 @@ def _validate_jacobian_backend(jacobian_backend: JacobianBackendKind) -> None:
         )
 
 
-def newton_step_autodiff(
+def newton_step(
     nlgame: gametypes.NonlinearGameType2,
     op: trajtypes.FixedStepPrimalDualTrajectory,
     alstate: altypes.JointAugmentedLagrangianState,
@@ -2057,10 +2103,9 @@ def newton_step_autodiff(
         - "l1" uses ||g||₁ / len(g) (matches ALGames.jl convention),
         - "l2" uses ||g||₂.
     jacobian_backend : {"autodiff", "structured"}
-        Backend used to assemble H = ∂G/∂z. The structured backend is faster on
-        tested linear-dynamics problems with assembled cost/constraint curvature,
-        but is not yet a universal replacement for autodiff because nonlinear
-        dynamics second-order terms are not assembled.
+        Backend used to assemble H = ∂G/∂z. The structured backend is intended
+        to match autodiff for supported `SampledContinuousSystemType1` problems
+        while avoiding construction of the full Jacobian by brute-force autodiff.
 
 
     Returns
@@ -2074,13 +2119,13 @@ def newton_step_autodiff(
 
     Notes
     -----
-    - This implementation uses autodiff Jacobians and dense linear algebra and is intended for
-      correctness/validation on small problems.
-    - A production implementation typically exploits block structure/sparsity and uses specialized
-      linear solves.
+    - This implementation currently uses dense linear algebra. The Jacobian backend is
+      configurable, but the linear solve itself is still dense.
+    - A production implementation typically exploits block structure/sparsity and uses
+      specialized linear solves.
     """
     debug_enabled = logger.isEnabledFor(logging.DEBUG)
-    step_call_id = _next_debug_call_id("newton_step_autodiff")
+    step_call_id = _next_debug_call_id("newton_step")
     step_t0 = time.perf_counter() if debug_enabled else 0.0
 
     # --- parameter validation (cheap; this function is not intended to be jitted) ---
@@ -2158,29 +2203,17 @@ def newton_step_autodiff(
 
 
     # --- jacobian of augmented lagrangian residual used for root finding ---
-    if jacobian_backend == "autodiff":
-        H0 = jacobian_al_residual_flat_autodiff(
-            nlgame,
-            z0,
-            op,
-            alstate,
-            discretize_method=discretize_method,
-            ineq_activation=ineq_activation,
-            mode="jacfwd",
-        )
-    elif jacobian_backend == "structured":
-        H0 = jacobian_al_residual_flat_structured(
-            nlgame,
-            z0,
-            op,
-            alstate,
-            discretize_method=discretize_method,
-            ineq_activation=ineq_activation,
-            include_second_order=True,
-        )
-    else:
-        # Defensive guard for callers that bypass the earlier validation.
-        raise ValueError(f"Unknown jacobian_backend={jacobian_backend!r}")
+    H0 = jacobian_al_residual_flat(
+        nlgame,
+        z0,
+        op,
+        alstate,
+        discretize_method=discretize_method,
+        ineq_activation=ineq_activation,
+        backend=jacobian_backend,
+        autodiff_mode="jacfwd",
+        structured_include_second_order=True,
+    )
 
     # --- solve for step direction of decision vars for finding root of AL residual ---
     sol = solve_newton_system_tikhonov(H0, g0, 
@@ -2298,6 +2331,17 @@ def newton_step_autodiff(
     return op_new, diag
 
 
+def newton_step_autodiff(*args, **kwargs) -> Tuple[trajtypes.FixedStepPrimalDualTrajectory, altypes.NewtonStepDiag]:
+    """
+    Backward-compatible alias for `newton_step`.
+
+    Historically this function always built H = ∂G/∂z with brute-force autodiff.
+    It now delegates to `newton_step`, which supports multiple Jacobian backends
+    through `jacobian_backend` while preserving the old default behavior.
+    """
+    return newton_step(*args, **kwargs)
+
+
 def newton_solve_stationarity_autodiff(
     nlgame: gametypes.NonlinearGameType2,
     op0: trajtypes.FixedStepPrimalDualTrajectory,
@@ -2310,7 +2354,7 @@ def newton_solve_stationarity_autodiff(
     dyn_tol: float,  # = 1e-3,
     max_iters: int,  # = 25,
     max_rejects: int,  # = 5,
-    # forwarded to newton_step_autodiff
+    # forwarded to newton_step
     step_rtol: float,  # = 1e-7,
     step_atol: float,  # = 1e-8,
     reg0: float,  # = 0.0,
@@ -2342,7 +2386,7 @@ def newton_solve_stationarity_autodiff(
       - dyn_vio_inf measures feasibility of the discrete dynamics constraints.
 
     A merit norm of the *full* packed residual G is still computed each iteration and is used
-    by the Armijo line search inside `newton_step_autodiff`.
+    by the Armijo line search inside `newton_step`.
 
     Evolution from earlier inner solves
     -----------------------------------
@@ -2393,9 +2437,9 @@ def newton_solve_stationarity_autodiff(
     normkind : ResidualNormKind
         Merit norm used for tracking/line-searching (e.g., "l1_mean" to match ALGames).
     jacobian_backend : {"autodiff", "structured"}
-        Backend forwarded to `newton_step_autodiff` for H = ∂G/∂z assembly.
+        Backend forwarded to `newton_step` for H = ∂G/∂z assembly.
 
-    Other parameters are forwarded to `newton_step_autodiff`.
+    Other parameters are forwarded to `newton_step`.
 
     Returns
     -------
@@ -2470,7 +2514,7 @@ def newton_solve_stationarity_autodiff(
         `opt` and `dyn` are the convergence checks consumed by this stationarity-oriented
         solve. `merit` remains the full packed residual norm so the diagnostics stay
         comparable to the older residual-norm solve and to the line-search objective used
-        inside `newton_step_autodiff`.
+        inside `newton_step`.
         """
         res = compute_al_residual_struct_from_traj(
             nlgame,
@@ -2540,7 +2584,7 @@ def newton_solve_stationarity_autodiff(
     for k in range(max_iters):
 
         # attempt to compute the next step in decision variables
-        op_new, step_diag = newton_step_autodiff(
+        op_new, step_diag = newton_step(
             nlgame,
             op,
             alstate,

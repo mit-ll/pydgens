@@ -2470,7 +2470,7 @@ def _benchmark_newton_step_constraint_heavy(benchmark, *, jacobian_backend):
     nlgame, op, alstate = _make_constraint_heavy_residual_problem(nt=8)
 
     def run():
-        op_out, diag = pdg_alsolver.newton_step_autodiff(
+        op_out, diag = pdg_alsolver.newton_step(
             nlgame,
             op,
             alstate,
@@ -3068,6 +3068,58 @@ def test_jacobian_al_residual_flat_structured_nonlinear_dynamics_matches_autodif
 
     assert H_struct.shape == H_ad.shape
     np.testing.assert_allclose(np.asarray(H_struct), np.asarray(H_ad), rtol=7e-5, atol=7e-5)
+
+
+def test_jacobian_al_residual_flat_dispatches_to_selected_backend(monkeypatch):
+    nlgame = SimpleNamespace()
+    z = jnp.array([1.0, 2.0], dtype=jnp.float32)
+    template_op = SimpleNamespace()
+    alstate = SimpleNamespace()
+    H_autodiff = jnp.eye(2, dtype=jnp.float32)
+    H_structured = 2.0 * jnp.eye(2, dtype=jnp.float32)
+    calls = {"autodiff": 0, "structured": 0}
+
+    def fake_autodiff(*args, **kwargs):
+        calls["autodiff"] += 1
+        assert kwargs["discretize_method"] == "euler"
+        assert kwargs["ineq_activation"] == "none"
+        assert kwargs["mode"] == "jacrev"
+        return H_autodiff
+
+    def fake_structured(*args, **kwargs):
+        calls["structured"] += 1
+        assert kwargs["discretize_method"] == "rk2"
+        assert kwargs["ineq_activation"] == "altro"
+        assert kwargs["include_second_order"] is False
+        return H_structured
+
+    monkeypatch.setattr(pdg_alsolver, "jacobian_al_residual_flat_autodiff", fake_autodiff)
+    monkeypatch.setattr(pdg_alsolver, "jacobian_al_residual_flat_structured", fake_structured)
+
+    H = pdg_alsolver.jacobian_al_residual_flat(
+        nlgame,
+        z,
+        template_op,
+        alstate,
+        discretize_method="euler",
+        ineq_activation="none",
+        backend="autodiff",
+        autodiff_mode="jacrev",
+    )
+    np.testing.assert_allclose(np.asarray(H), np.asarray(H_autodiff))
+
+    H = pdg_alsolver.jacobian_al_residual_flat(
+        nlgame,
+        z,
+        template_op,
+        alstate,
+        discretize_method="rk2",
+        ineq_activation="altro",
+        backend="structured",
+        structured_include_second_order=False,
+    )
+    np.testing.assert_allclose(np.asarray(H), np.asarray(H_structured))
+    assert calls == {"autodiff": 1, "structured": 1}
 
 
 def test_jacobian_al_residual_flat_structured_cost_curvature_matches_autodiff_on_quadratic_problem():
@@ -4062,6 +4114,43 @@ def test_newton_step_autodiff_rejects_when_linear_solve_fails(monkeypatch):
     assert diag.reg == pytest.approx(1.0)
 
 
+def test_newton_step_autodiff_delegates_to_newton_step(monkeypatch):
+    expected = ("OP_NEW", "DIAG")
+    seen = {"args": None, "kwargs": None}
+
+    def fake_newton_step(*args, **kwargs):
+        seen["args"] = args
+        seen["kwargs"] = kwargs
+        return expected
+
+    monkeypatch.setattr(pdg_alsolver, "newton_step", fake_newton_step)
+
+    out = pdg_alsolver.newton_step_autodiff(
+        "nlgame",
+        "op",
+        "alstate",
+        step_rtol=1e-7,
+        step_atol=1e-8,
+        discretize_method="euler",
+        ineq_activation="none",
+        reg0=0.0,
+        reg1_min=1e-6,
+        reg_increase=10.0,
+        reg_max=1e8,
+        reg_max_iters=64,
+        ls_alpha0=1.0,
+        ls_tau=0.5,
+        ls_beta=0.25,
+        ls_max_iters=20,
+        normkind="l1_mean",
+        jacobian_backend="structured",
+    )
+
+    assert out == expected
+    assert seen["args"] == ("nlgame", "op", "alstate")
+    assert seen["kwargs"]["jacobian_backend"] == "structured"
+
+
 def test_newton_step_autodiff_accepts_noop_if_step_tiny(monkeypatch):
     tg = "dummy_tg"
     op = SimpleNamespace(tg=tg)
@@ -4722,8 +4811,8 @@ def test_newton_solve_stationarity_opt_tol_at_start_does_not_step(monkeypatch):
 
     monkeypatch.setattr(
         pdg_alsolver,
-        "newton_step_autodiff",
-        lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not call newton_step_autodiff")),
+        "newton_step",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not call newton_step")),
     )
 
     op_out, diag = pdg_alsolver.newton_solve_stationarity_autodiff(
@@ -4768,7 +4857,7 @@ def test_newton_solve_stationarity_metrics_reuse_structured_residual_at_start(mo
     )
     monkeypatch.setattr(
         pdg_alsolver,
-        "newton_step_autodiff",
+        "newton_step",
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not step")),
     )
 
@@ -4821,7 +4910,7 @@ def test_newton_solve_stationarity_forwards_jacobian_backend_to_step(monkeypatch
         )
         return op_, diag
 
-    monkeypatch.setattr(pdg_alsolver, "newton_step_autodiff", fake_step)
+    monkeypatch.setattr(pdg_alsolver, "newton_step", fake_step)
 
     op_out, diag = pdg_alsolver.newton_solve_stationarity_autodiff(
         nlgame,
@@ -4892,7 +4981,7 @@ def test_newton_solve_stationarity_reject_streak_returns_last_accepted(monkeypat
             )
             return op, diag
 
-    monkeypatch.setattr(pdg_alsolver, "newton_step_autodiff", fake_step)
+    monkeypatch.setattr(pdg_alsolver, "newton_step", fake_step)
 
     op_out, diag = pdg_alsolver.newton_solve_stationarity_autodiff(
         nlgame, op0, alstate,
@@ -4944,7 +5033,7 @@ def test_newton_solve_stationarity_step_stall_before_opt_tol(monkeypatch):
         )
         return op0, diag  # unchanged
 
-    monkeypatch.setattr(pdg_alsolver, "newton_step_autodiff", fake_step)
+    monkeypatch.setattr(pdg_alsolver, "newton_step", fake_step)
 
     op_out, diag = pdg_alsolver.newton_solve_stationarity_autodiff(
         nlgame, op0, alstate,
@@ -5212,7 +5301,7 @@ def test_newton_solve_stationarity_nonfinite_dyn_residual_does_not_converge(monk
     # Make stepping unreachable so we only test iteration-0 convergence decision
     monkeypatch.setattr(
         pdg_alsolver,
-        "newton_step_autodiff",
+        "newton_step",
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not step")),
     )
 

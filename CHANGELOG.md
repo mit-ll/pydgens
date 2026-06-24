@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `test_alsolver.py` Added correctness and benchmark coverage comparing the experimental structured dynamics Jacobian slice against the autodiff Jacobian backend.
 - `alsolver.py` Added logger-oriented diagnostics for tracing AL solver progress and identifying expensive residual/Jacobian evaluation paths.
 - `alsolver.py` Added an experimental structured Jacobian backend for AL residual Jacobians, including dynamics feasibility blocks, dynamics-multiplier stationarity blocks, nonlinear-dynamics curvature blocks, player-local cost Hessian blocks, and auxiliary-constraint curvature blocks.
+- `alsolver.py` Added a backend-dispatching `jacobian_al_residual_flat` entry point for selecting autodiff or structured AL residual Jacobian assembly.
 - `test_alsolver.py` Added correctness and benchmark coverage comparing the experimental structured Jacobian backend against the autodiff backend across dynamics-only, nonlinear-dynamics, quadratic-cost, linear-constraint, and nonlinear-constraint cases.
 
 
@@ -22,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `alsolver.py` Refactored augmented-Lagrangian residual assembly to reuse shared constraint linearizations and residual ingredients across stationarity-gradient computation.
 - `alsolver.py` Reduced duplicated residual work in the stationarity Newton metrics path by deriving optimality, dynamics violation, and merit metrics from a single structured AL residual evaluation.
 - `alsolver.py` Added a `jacobian_backend` option to the Newton-step, stationarity-solve, and AL-solve paths so callers can opt into the structured AL residual Jacobian while preserving the autodiff backend as the default.
+- `alsolver.py` Introduced `newton_step` as the preferred neutral Newton-step entry point while retaining `newton_step_autodiff` as a backward-compatible wrapper.
 - `test_alsolver.py` Added Newton-step dispatch and benchmark coverage comparing autodiff and structured Jacobian backends end-to-end.
 - `constrainttypes.py` Extended constraint linearizations to retain the originating constraint callable for structured Jacobian Hessian assembly.
 
