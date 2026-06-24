@@ -2151,6 +2151,154 @@ def test_compute_al_residual_flat_from_decision_vars_constraint_heavy_warm_perf(
     benchmark(run)
 
 
+@pytest.mark.benchmark(group="alsolver-jacobian-constraints-001")
+def test_jacobian_al_residual_flat_autodiff_constraint_heavy_warm_perf(benchmark):
+    tg = TimeGrid(nt=8, dt=0.05, t0=0.0)
+    nt = tg.nt
+    K = nt - 1
+    nx = 4
+    N = 2
+    u_splits = jnp.array([1, 1], dtype=jnp.int32)
+    nu = int(np.sum(np.asarray(u_splits)))
+
+    def f_cont(t, x, u):
+        return jnp.array(
+            [
+                x[1],
+                u[0] - 0.05 * x[1],
+                x[3],
+                u[1] - 0.05 * x[3],
+            ],
+            dtype=x.dtype,
+        )
+
+    cs = SampledContinuousSystemType1(tg=tg, dynamics=f_cont, nx=nx, nu=nu)
+
+    def make_cost(i):
+        target = jnp.array([1.0 + i, 0.2, 1.5 + i, -0.1], dtype=jnp.float32)
+
+        def running(t, x, u_i):
+            dx = x - target
+            return 0.1 * (dx @ dx) + 0.05 * (u_i @ u_i)
+
+        def terminal(t, x):
+            dx = x - target
+            return 2.0 * (dx @ dx)
+
+        return PlayerCostSpecContinuous(
+            running=running,
+            terminal=terminal,
+            control_domain=CostControlDomain.LOCAL,
+            control_coupling=CostControlStructure.LOCAL_ONLY,
+        )
+
+    active_all = tuple(range(K))
+
+    def control_bounds(t, x, u):
+        return jnp.array(
+            [
+                u[0] - 1.5,
+                -u[0] - 1.5,
+                u[1] - 1.5,
+                -u[1] - 1.5,
+            ],
+            dtype=u.dtype,
+        )
+
+    def state_bounds(t, x, u):
+        return jnp.array(
+            [
+                x[1] - 3.0,
+                -x[1] - 0.2,
+                x[3] - 3.0,
+                -x[3] - 0.2,
+            ],
+            dtype=x.dtype,
+        )
+
+    def separation(t, x, u):
+        return jnp.array([0.75 - (x[2] - x[0])], dtype=x.dtype)
+
+    constraints = GameConstraintGridMap(
+        ineq_blocks=(
+            ConstraintBlockGridMap(
+                tg=tg,
+                func=control_bounds,
+                cdim_out_step=4,
+                active_steps=active_all,
+                iseq=False,
+                terminal=False,
+            ),
+            ConstraintBlockGridMap(
+                tg=tg,
+                func=state_bounds,
+                cdim_out_step=4,
+                active_steps=active_all,
+                iseq=False,
+                terminal=False,
+            ),
+            ConstraintBlockGridMap(
+                tg=tg,
+                func=separation,
+                cdim_out_step=1,
+                active_steps=active_all,
+                iseq=False,
+                terminal=False,
+            ),
+        ),
+        eq_blocks=(),
+    )
+
+    nlgame = NonlinearGameType2(
+        cs=cs,
+        N=N,
+        costs=[make_cost(0), make_cost(1)],
+        constraints=constraints,
+        u_splits=u_splits,
+    )
+
+    ts = jnp.linspace(0.0, 1.0, nt, dtype=jnp.float32)
+    xs = jnp.stack(
+        [
+            0.5 * ts,
+            0.2 + 0.1 * ts,
+            1.2 + 0.6 * ts,
+            0.3 - 0.1 * ts,
+        ],
+        axis=1,
+    )
+    us = jnp.stack(
+        [
+            0.1 * jnp.ones((K,), dtype=jnp.float32),
+            -0.05 * jnp.ones((K,), dtype=jnp.float32),
+        ],
+        axis=1,
+    )
+    ls = jnp.zeros((K, N, nx), dtype=jnp.float32)
+    op = FixedStepPrimalDualTrajectory(tg=tg, xs=xs, us=us, ls=ls)
+    z = pdg_alsolver.pack_decision_vars_1d(op)
+    alstate = altypes.JointAugmentedLagrangianState(
+        lam_ineq=jnp.zeros((constraints.nc_ineq,), dtype=jnp.float32),
+        rho_ineq=jnp.ones((constraints.nc_ineq,), dtype=jnp.float32),
+        lam_eq=jnp.zeros((constraints.nc_eq,), dtype=jnp.float32),
+        rho_eq=jnp.ones((constraints.nc_eq,), dtype=jnp.float32),
+    )
+
+    def run():
+        H = pdg_alsolver.jacobian_al_residual_flat_autodiff(
+            nlgame,
+            z,
+            op,
+            alstate,
+            discretize_method="euler",
+            ineq_activation="altro",
+            mode="jacfwd",
+        )
+        return H.block_until_ready()
+
+    benchmark(run)
+
+
 # -------------------------
 # pack_al_residual_1d
 # -------------------------
