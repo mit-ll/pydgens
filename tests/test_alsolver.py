@@ -41,9 +41,10 @@ def _make_game_and_op(nt=6, nx=3, nu=7, N=4):
     ls = jnp.zeros((K, N, nx), dtype=jnp.float32)
     op = SimpleNamespace(tg=tg, xs=xs, us=us, ls=ls, nt=nt, nsteps=K, nx=nx, nu=nu)
 
-    # minimal nlgame mock: compute_al_residual_struct only needs tg, cs, and u_splits later for packing
+    # minimal nlgame mock: compute_al_residual_struct needs constraints for shared ingredients
     cs = SimpleNamespace(tg=tg)
-    nlgame = SimpleNamespace(tg=tg, cs=cs, N=N, nt=nt, nx=nx, nu=nu)
+    constraints = GameConstraintGridMap(ineq_blocks=(), eq_blocks=())
+    nlgame = SimpleNamespace(tg=tg, cs=cs, N=N, nt=nt, nx=nx, nu=nu, constraints=constraints)
 
     return nlgame, op
 
@@ -1373,6 +1374,63 @@ def test_gradient_aug_lagrangian_trajectory_reuses_dynamics_jacobians_across_pla
     assert dU_all.shape == (N, K, nu)
 
 
+def test_build_al_residual_ingredients_collects_shared_linearizations_and_dynamics_jacobians(monkeypatch):
+    tg = TimeGrid(nt=4, dt=0.1, t0=0.0)
+    K = tg.nt - 1
+    nx = 2
+    nu = 1
+
+    def f_cont(t, x, u):
+        return jnp.zeros_like(x)
+
+    cs = SampledContinuousSystemType1(tg=tg, dynamics=f_cont, nx=nx, nu=nu)
+    constraints = GameConstraintGridMap(ineq_blocks=(), eq_blocks=())
+    nlgame = SimpleNamespace(tg=tg, cs=cs, constraints=constraints)
+    op = FixedStepPrimalDualTrajectory(
+        tg=tg,
+        xs=jnp.zeros((tg.nt, nx), dtype=jnp.float32),
+        us=jnp.zeros((K, nu), dtype=jnp.float32),
+        ls=jnp.zeros((K, 1, nx), dtype=jnp.float32),
+    )
+
+    ineq_lins = ("ineq-linearization",)
+    eq_lins = ("eq-linearization",)
+    dfd_dx = jnp.ones((K, nx, nx), dtype=jnp.float32)
+    dfd_du = jnp.ones((K, nx, nu), dtype=jnp.float32) * 2.0
+    calls = {"constraints": 0, "dynamics": 0}
+
+    def fake_build_constraint_step_linearizations(constraints, op):
+        calls["constraints"] += 1
+        return ineq_lins, eq_lins
+
+    def fake_jacobian_discrete_dynamics_trajectory(cs, op, method):
+        calls["dynamics"] += 1
+        return dfd_dx, dfd_du
+
+    monkeypatch.setattr(
+        pdg_alsolver.contypes,
+        "build_constraint_step_linearizations",
+        fake_build_constraint_step_linearizations,
+    )
+    monkeypatch.setattr(
+        pdg_alsolver.systypes,
+        "jacobian_discrete_dynamics_trajectory",
+        fake_jacobian_discrete_dynamics_trajectory,
+    )
+
+    ingredients = pdg_alsolver.build_al_residual_ingredients(
+        nlgame,
+        op,
+        discretize_method="rk2",
+    )
+
+    assert calls == {"constraints": 1, "dynamics": 1}
+    assert ingredients.ineq_lins is ineq_lins
+    assert ingredients.eq_lins is eq_lins
+    assert ingredients.dfd_dx is dfd_dx
+    assert ingredients.dfd_du is dfd_du
+
+
 def test_gradient_aug_lagrangian_trajectory_raises_on_timegrid_mismatch(monkeypatch):
     nlgame, op, alstate = _make_dummy_game_and_op()
     # change op.tg
@@ -1916,6 +1974,55 @@ def test_compute_al_residual_struct_shapes_and_x0_exclusion(monkeypatch):
     np.testing.assert_allclose(np.asarray(r.dLdX), np.asarray(dL_dX_all[:, 1:, :]))
     np.testing.assert_allclose(np.asarray(r.dLdU), np.asarray(dL_dU_all))
     np.testing.assert_allclose(np.asarray(r.dyn_res), np.asarray(jnp.ones((K, nx)) * 30.0))
+
+
+def test_compute_al_residual_struct_builds_and_passes_al_residual_ingredients_once(monkeypatch):
+    nt, nx, nu, N = 5, 2, 3, 2
+    K = nt - 1
+    nlgame, op = _make_game_and_op(nt=nt, nx=nx, nu=nu, N=N)
+
+    ingredients = pdg_alsolver._ALResidualIngredients(
+        ineq_lins=("ineq-linearization",),
+        eq_lins=("eq-linearization",),
+        dfd_dx=jnp.ones((K, nx, nx), dtype=jnp.float32),
+        dfd_du=jnp.ones((K, nx, nu), dtype=jnp.float32),
+    )
+    calls = {"ingredients": 0, "gradient": 0}
+
+    def fake_build_ingredients(nlgame_, op_, *, discretize_method):
+        calls["ingredients"] += 1
+        assert nlgame_ is nlgame
+        assert op_ is op
+        assert discretize_method == "rk2"
+        return ingredients
+
+    def fake_grad(nlgame_, op_, alstate_, **kwargs):
+        calls["gradient"] += 1
+        assert kwargs["ingredients"] is ingredients
+        return (
+            jnp.ones((N, nt, nx), dtype=jnp.float32),
+            jnp.ones((N, K, nu), dtype=jnp.float32),
+        )
+
+    def fake_dyn_res(cs_, op_, method):
+        return jnp.zeros((K, nx), dtype=jnp.float32)
+
+    monkeypatch.setattr(pdg_alsolver, "build_al_residual_ingredients", fake_build_ingredients)
+    monkeypatch.setattr(pdg_alsolver, "gradient_aug_lagrangian_trajectory", fake_grad)
+    monkeypatch.setattr(pdg_alsolver.systypes, "residual_discrete_dynamics_trajectory", fake_dyn_res)
+
+    r = pdg_alsolver.compute_al_residual_struct_from_traj(
+        nlgame,
+        op,
+        SimpleNamespace(),
+        discretize_method="rk2",
+        ineq_activation="altro",
+    )
+
+    assert calls == {"ingredients": 1, "gradient": 1}
+    assert r.dLdX.shape == (N, K, nx)
+    assert r.dLdU.shape == (N, K, nu)
+    assert r.dyn_res.shape == (K, nx)
 
 
 def test_compute_al_residual_struct_raises_on_timegrid_mismatch(monkeypatch):

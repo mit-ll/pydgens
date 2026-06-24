@@ -14,6 +14,7 @@ import logging
 import time
 
 from typing import Tuple, Literal, Callable, List, get_args
+from dataclasses import dataclass
 from functools import singledispatch
 
 import pydgens.ir.trajectorytypes as trajtypes
@@ -27,6 +28,27 @@ import pydgens.ir.altypes as altypes
 logger = logging.getLogger(__name__)
 
 ResidualNormKind = Literal["l1", "l2", "l1_mean", "l2_rms", "linf"]
+
+
+@dataclass(frozen=True)
+class _ALResidualIngredients:
+    """
+    Shared trajectory linearizations used while assembling AL residual terms.
+
+    These are factored out so residual assembly, diagnostics, and future structured
+    Jacobian assembly can consume the same expensive per-trajectory ingredients.
+
+    NOTE: This is currently implemented in alsolver, rather than altypes, becaus it is an
+    solver-internal caching/plumbing object, rather than a class that is meant to be
+    generally reusable. To help make this distinction, it is named as a "private 
+    helper" with the leading underscore.
+    If, in the future, other solvers have need to leverage this class, it should be 
+    renamed without the underscore and moved to altypes (or elsewhere)
+    """
+    ineq_lins: Tuple[contypes.ConstraintStepLinearization, ...]
+    eq_lins: Tuple[contypes.ConstraintStepLinearization, ...]
+    dfd_dx: jnp.ndarray | None
+    dfd_du: jnp.ndarray | None
 
 _DEBUG_CALL_COUNTS: dict[str, int] = {}
 
@@ -177,6 +199,41 @@ def unpack_decision_vars(
 
     return unpack_decision_vars_no_checks(z, template)
 
+
+def build_al_residual_ingredients(
+    nlgame: gametypes.NonlinearGameType2,
+    op: trajtypes.FixedStepPrimalDualTrajectory,
+    *,
+    discretize_method: str,
+) -> _ALResidualIngredients:
+    """
+    Build shared per-trajectory ingredients for AL residual assembly.
+
+    This intentionally does not evaluate player costs or dynamics residuals. It only
+    collects ingredients that are reused by stationarity-gradient terms and, later,
+    by structured Jacobian assembly.
+    """
+    ineq_lins, eq_lins = contypes.build_constraint_step_linearizations(
+        constraints=nlgame.constraints,
+        op=op,
+    )
+
+    dfd_dx = None
+    dfd_du = None
+    if isinstance(nlgame.cs, systypes.SampledContinuousSystemType1):
+        dfd_dx, dfd_du = systypes.jacobian_discrete_dynamics_trajectory(
+            nlgame.cs,
+            op=op,
+            method=discretize_method,
+        )
+
+    return _ALResidualIngredients(
+        ineq_lins=ineq_lins,
+        eq_lins=eq_lins,
+        dfd_dx=dfd_dx,
+        dfd_du=dfd_du,
+    )
+
 @singledispatch
 def gradient_aug_lagrangian_trajectory(nlgame, *args, **kwargs):
     raise NotImplementedError(f"No implementation for {type(nlgame)}")
@@ -189,6 +246,7 @@ def _gradient_aug_lagrangian_trajectory(
     *,
     discretize_method: str, # = "rk2",
     ineq_activation: str, # = "altro",
+    ingredients: _ALResidualIngredients | None = None,
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """
     Assemble stationarity gradients of the augmented Lagrangian for *all* players
@@ -236,24 +294,27 @@ def _gradient_aug_lagrangian_trajectory(
     nt, nx, nu = nlgame.nt, nlgame.nx, nlgame.nu
     K = nt - 1
 
+    if ingredients is None:
+        ingredients = build_al_residual_ingredients(
+            nlgame,
+            op,
+            discretize_method=discretize_method,
+        )
+
     # ---- shared auxiliary constraint gradients (compute once) ----
-    ineq_lins, eq_lins = contypes.build_constraint_step_linearizations(
-        constraints=nlgame.constraints,
-        op=op,
-    )
     dLC_dX, dLC_dU = _gradient_aug_lagrangian_trajectory_constraints_from_linearizations(
         constraints=nlgame.constraints,
         alstate=alstate,
         op=op,
-        ineq_lins=ineq_lins,
-        eq_lins=eq_lins,
+        ineq_lins=ingredients.ineq_lins,
+        eq_lins=ingredients.eq_lins,
     )
     dLP_dX, dLP_dU = _gradient_aug_lagrangian_trajectory_penalty_from_linearizations(
         constraints=nlgame.constraints,
         alstate=alstate,
         op=op,
-        ineq_lins=ineq_lins,
-        eq_lins=eq_lins,
+        ineq_lins=ingredients.ineq_lins,
+        eq_lins=ingredients.eq_lins,
         ineq_activation=ineq_activation,
     )
 
@@ -273,16 +334,6 @@ def _gradient_aug_lagrangian_trajectory(
     #   add cost gradient (state + local control inserted into joint control)
     #   add dynamics-multiplier gradient (state + joint control)
     u_splits = nlgame.u_splits
-
-    # The dynamics Jacobians depend on the shared trajectory, not on the player.
-    # Compute them once here and pass them into the playerwise helper so multi-player
-    # games do not repeat the same trajectory linearization N times.
-    dfd_dx = None
-    dfd_du = None
-    if isinstance(nlgame.cs, systypes.SampledContinuousSystemType1):
-        dfd_dx, dfd_du = systypes.jacobian_discrete_dynamics_trajectory(
-            nlgame.cs, op=op, method=discretize_method
-        )
 
     # helper: compute slice for player i
     def _u_slice(i: int) -> slice:
@@ -308,8 +359,8 @@ def _gradient_aug_lagrangian_trajectory(
             player_i=i,
             op=op,
             discretize_method=discretize_method,
-            dfd_dx=dfd_dx,
-            dfd_du=dfd_du,
+            dfd_dx=ingredients.dfd_dx,
+            dfd_du=ingredients.dfd_du,
         )  # (nt,nx), (K,nu)
 
         # add to outputs
@@ -665,6 +716,12 @@ def compute_al_residual_struct_from_traj(
     if nlgame.tg != op.tg:
         raise ValueError(f"TimeGrid mismatch: nlgame.tg={nlgame.tg} vs op.tg={op.tg}")
 
+    ingredients = build_al_residual_ingredients(
+        nlgame,
+        op,
+        discretize_method=discretize_method,
+    )
+
     # Stationarity gradients for all players (joint control coordinates)
     dL_dX_all, dL_dU_all = gradient_aug_lagrangian_trajectory(
         nlgame,
@@ -672,6 +729,7 @@ def compute_al_residual_struct_from_traj(
         alstate,
         discretize_method=discretize_method,
         ineq_activation=ineq_activation,
+        ingredients=ingredients,
     )
 
     # Exclude x0 since it is not a decision variable
