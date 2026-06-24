@@ -270,6 +270,16 @@ def _gradient_aug_lagrangian_trajectory(
     #   add dynamics-multiplier gradient (state + joint control)
     u_splits = nlgame.u_splits
 
+    # The dynamics Jacobians depend on the shared trajectory, not on the player.
+    # Compute them once here and pass them into the playerwise helper so multi-player
+    # games do not repeat the same trajectory linearization N times.
+    dfd_dx = None
+    dfd_du = None
+    if isinstance(nlgame.cs, systypes.SampledContinuousSystemType1):
+        dfd_dx, dfd_du = systypes.jacobian_discrete_dynamics_trajectory(
+            nlgame.cs, op=op, method=discretize_method
+        )
+
     # helper: compute slice for player i
     def _u_slice(i: int) -> slice:
         start = int(jnp.sum(u_splits[:i]))
@@ -294,6 +304,8 @@ def _gradient_aug_lagrangian_trajectory(
             player_i=i,
             op=op,
             discretize_method=discretize_method,
+            dfd_dx=dfd_dx,
+            dfd_du=dfd_du,
         )  # (nt,nx), (K,nu)
 
         # add to outputs
@@ -313,6 +325,9 @@ def gradient_aug_lagrangian_playerwise_trajectory_dynamics(
     player_i: int,
     op: trajtypes.FixedStepPrimalDualTrajectory,
     discretize_method: str,
+    *,
+    dfd_dx: jnp.ndarray | None = None,
+    dfd_du: jnp.ndarray | None = None,
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """
     Contribution to ∇_X L_i and ∇_U L_i from the dynamics-constraint term, where L_i
@@ -353,6 +368,10 @@ def gradient_aug_lagrangian_playerwise_trajectory_dynamics(
     discretize_method : str
         Integration method used to construct f_d ("euler", "rk2", "rk3", "rk4", ...).
         Should be treated as static for JIT purposes.
+    dfd_dx, dfd_du : jnp.ndarray, optional
+        Precomputed trajectory Jacobians of the discrete dynamics. When omitted, this
+        function computes them itself for backwards-compatible direct use. Passing them
+        avoids recomputing the same trajectory Jacobians once per player.
 
     Returns
     -------
@@ -369,9 +388,10 @@ def gradient_aug_lagrangian_playerwise_trajectory_dynamics(
     # Jacobians along trajectory:
     # dfd_dx: (nt-1, nx, nx)  A_k
     # dfd_du: (nt-1, nx, nu)  B_k
-    dfd_dx, dfd_du = systypes.jacobian_discrete_dynamics_trajectory(
-        cs, op=op, method=discretize_method
-    )
+    if dfd_dx is None or dfd_du is None:
+        dfd_dx, dfd_du = systypes.jacobian_discrete_dynamics_trajectory(
+            cs, op=op, method=discretize_method
+        )
 
     # State contribution: term_x[k] = A_k^T @ μ_k   -> (nt-1, nx)
     term_x = jax.vmap(lambda A, lam: A.T @ lam)(dfd_dx, mu_i)

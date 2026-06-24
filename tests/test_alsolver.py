@@ -1210,6 +1210,95 @@ def test_gradient_aug_lagrangian_trajectory_adds_joint_dynamics_control_to_each_
         np.testing.assert_allclose(np.array(dX_all[i]), 0.0)
 
 
+def test_gradient_aug_lagrangian_trajectory_reuses_dynamics_jacobians_across_players(monkeypatch):
+    N = 3
+    nt = 5
+    K = nt - 1
+    nx = 2
+    nu = 3
+    tg = TimeGrid(nt=nt, dt=0.1, t0=0.0)
+    u_splits = jnp.array([1, 1, 1], dtype=jnp.int32)
+
+    def f_cont(t, x, u):
+        return jnp.zeros_like(x)
+
+    cs = SampledContinuousSystemType1(tg=tg, dynamics=f_cont, nx=nx, nu=nu)
+    xs = jnp.zeros((nt, nx), dtype=jnp.float32)
+    us = jnp.zeros((K, nu), dtype=jnp.float32)
+    ls = jnp.ones((K, N, nx), dtype=jnp.float32)
+    op = FixedStepPrimalDualTrajectory(tg=tg, xs=xs, us=us, ls=ls)
+
+    dummy_cost = SimpleNamespace(running=lambda t, x, u: 0.0, terminal=lambda t, x: 0.0)
+    nlgame = SimpleNamespace(
+        tg=tg,
+        nt=nt,
+        nx=nx,
+        nu=nu,
+        N=N,
+        u_splits=u_splits,
+        cs=cs,
+        constraints=SimpleNamespace(tg=tg, nc_ineq=0, nc_eq=0, nc_all=0),
+        costs=[dummy_cost for _ in range(N)],
+    )
+    alstate = SimpleNamespace(
+        lam_ineq=jnp.zeros((0,), dtype=jnp.float32),
+        rho_ineq=jnp.zeros((0,), dtype=jnp.float32),
+        lam_eq=jnp.zeros((0,), dtype=jnp.float32),
+        rho_eq=jnp.zeros((0,), dtype=jnp.float32),
+    )
+
+    monkeypatch.setattr(
+        pdg_alsolver,
+        "gradient_aug_lagrangian_trajectory_constraints",
+        lambda constraints, alstate, op: (
+            jnp.zeros((nt, nx), dtype=jnp.float32),
+            jnp.zeros((K, nu), dtype=jnp.float32),
+        ),
+    )
+    monkeypatch.setattr(
+        pdg_alsolver,
+        "gradient_aug_lagrangian_trajectory_penalty",
+        lambda constraints, alstate, op, ineq_activation="altro": (
+            jnp.zeros((nt, nx), dtype=jnp.float32),
+            jnp.zeros((K, nu), dtype=jnp.float32),
+        ),
+    )
+    monkeypatch.setattr(
+        pdg_alsolver.costtypes,
+        "gradient_cost_local_ctrl_playerwise_trajectory",
+        lambda **kwargs: (
+            jnp.zeros((nt, nx), dtype=jnp.float32),
+            jnp.zeros((K, 1), dtype=jnp.float32),
+        ),
+    )
+
+    calls = {"count": 0}
+
+    def fake_dynamics_jacobian(cs, op, method):
+        calls["count"] += 1
+        As = jnp.tile(jnp.eye(nx, dtype=jnp.float32)[None, :, :], (K, 1, 1))
+        Bs = jnp.ones((K, nx, nu), dtype=jnp.float32)
+        return As, Bs
+
+    monkeypatch.setattr(
+        pdg_alsolver.systypes,
+        "jacobian_discrete_dynamics_trajectory",
+        fake_dynamics_jacobian,
+    )
+
+    dX_all, dU_all = pdg_alsolver._gradient_aug_lagrangian_trajectory(
+        nlgame,
+        op,
+        alstate,
+        discretize_method="rk2",
+        ineq_activation="altro",
+    )
+
+    assert calls["count"] == 1
+    assert dX_all.shape == (N, nt, nx)
+    assert dU_all.shape == (N, K, nu)
+
+
 def test_gradient_aug_lagrangian_trajectory_raises_on_timegrid_mismatch(monkeypatch):
     nlgame, op, alstate = _make_dummy_game_and_op()
     # change op.tg
