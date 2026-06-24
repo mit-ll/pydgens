@@ -11,6 +11,7 @@ import math
 import jax.numpy as jnp
 import numpy as np
 import logging
+import time
 
 from typing import Tuple, Literal, Callable, List, get_args
 from functools import singledispatch
@@ -26,6 +27,24 @@ import pydgens.ir.altypes as altypes
 logger = logging.getLogger(__name__)
 
 ResidualNormKind = Literal["l1", "l2", "l1_mean", "l2_rms", "linf"]
+
+_DEBUG_CALL_COUNTS: dict[str, int] = {}
+
+
+def _next_debug_call_id(name: str) -> int:
+    _DEBUG_CALL_COUNTS[name] = _DEBUG_CALL_COUNTS.get(name, 0) + 1
+    return _DEBUG_CALL_COUNTS[name]
+
+
+def _should_emit_sampled_debug(call_id: int, *, first_n: int = 5, every: int = 25) -> bool:
+    return call_id <= first_n or (every > 0 and call_id % every == 0)
+
+
+def _debug_shape(x) -> tuple[int, ...] | None:
+    shape = getattr(x, "shape", None)
+    if shape is None:
+        return None
+    return tuple(int(s) for s in shape)
 
 def pack_decision_vars_no_checks(op:trajtypes.FixedStepPrimalDualTrajectory) -> jnp.ndarray:
     """
@@ -717,6 +736,20 @@ def compute_al_residual_flat_from_decision_vars(
     G_flat : jnp.ndarray, shape (ng,)
         Packed augmented lagrangian residual vector consistent with pack_al_residual ordering.
     """
+    log_debug = logger.isEnabledFor(logging.DEBUG)
+    call_id = _next_debug_call_id("compute_al_residual_flat_from_decision_vars")
+    emit = log_debug and _should_emit_sampled_debug(call_id)
+    if emit:
+        t0 = time.perf_counter()
+        logger.debug(
+            "AL trace residual_flat start call=%d z_shape=%s x_shape=%s u_shape=%s l_shape=%s",
+            call_id,
+            _debug_shape(z),
+            _debug_shape(template_op.xs),
+            _debug_shape(template_op.us),
+            _debug_shape(template_op.ls),
+        )
+
     op = unpack_decision_vars(z, template_op, check_length=True)
     r = compute_al_residual_struct_from_traj(
         nlgame,
@@ -725,7 +758,18 @@ def compute_al_residual_flat_from_decision_vars(
         discretize_method=discretize_method,
         ineq_activation=ineq_activation,
     )
-    return pack_al_residual_1d(r, u_splits=nlgame.u_splits)
+    g_flat = pack_al_residual_1d(r, u_splits=nlgame.u_splits)
+
+    if emit:
+        dt = time.perf_counter() - t0
+        logger.debug(
+            "AL trace residual_flat done call=%d dt=%.3fs residual_shape=%s",
+            call_id,
+            dt,
+            _debug_shape(g_flat),
+        )
+
+    return g_flat
 
 
 def jacobian_al_residual_flat_autodiff(
@@ -751,6 +795,17 @@ def jacobian_al_residual_flat_autodiff(
     H : jnp.ndarray, shape (ng, nz)
     """
     z = jnp.asarray(z)
+    log_debug = logger.isEnabledFor(logging.DEBUG)
+    call_id = _next_debug_call_id("jacobian_al_residual_flat_autodiff")
+    emit = log_debug and _should_emit_sampled_debug(call_id, first_n=10, every=10)
+    if emit:
+        t0 = time.perf_counter()
+        logger.debug(
+            "AL trace jacobian start call=%d mode=%s z_shape=%s",
+            call_id,
+            mode,
+            _debug_shape(z),
+        )
 
     def G_of_z(z_):
         return compute_al_residual_flat_from_decision_vars(
@@ -763,11 +818,21 @@ def jacobian_al_residual_flat_autodiff(
         )
 
     if mode == "jacfwd":
-        return jax.jacfwd(G_of_z)(z)
+        H = jax.jacfwd(G_of_z)(z)
     elif mode == "jacrev":
-        return jax.jacrev(G_of_z)(z)
+        H = jax.jacrev(G_of_z)(z)
     else:
         raise ValueError("mode must be 'jacfwd' or 'jacrev'")
+
+    if emit:
+        dt = time.perf_counter() - t0
+        logger.debug(
+            "AL trace jacobian done call=%d dt=%.3fs H_shape=%s",
+            call_id,
+            dt,
+            _debug_shape(H),
+        )
+    return H
 
 def _validate_reg_params(
     *,
@@ -1336,6 +1401,9 @@ def newton_step_autodiff(
     - A production implementation typically exploits block structure/sparsity and uses specialized
       linear solves.
     """
+    debug_enabled = logger.isEnabledFor(logging.DEBUG)
+    step_call_id = _next_debug_call_id("newton_step_autodiff")
+    step_t0 = time.perf_counter() if debug_enabled else 0.0
 
     # --- parameter validation (cheap; this function is not intended to be jitted) ---
     _validate_reg_params(
@@ -1355,6 +1423,15 @@ def newton_step_autodiff(
     # --- augmented lagrangian residual as function of decision variables packed as 1D vector ---
     z0 = pack_decision_vars_1d(op)
     z0 = jnp.asarray(z0)
+    if debug_enabled:
+        logger.debug(
+            "Newton step start call=%d z_shape=%s x_shape=%s u_shape=%s l_shape=%s",
+            step_call_id,
+            _debug_shape(z0),
+            _debug_shape(op.xs),
+            _debug_shape(op.us),
+            _debug_shape(op.ls),
+        )
 
     def G_of_z(z: jnp.ndarray) -> jnp.ndarray:
         return compute_al_residual_flat_from_decision_vars(
@@ -1375,6 +1452,12 @@ def newton_step_autodiff(
             step_norm=0.0, reg=float(reg0),
             ls_iters=0, solve_ok=False
         )
+        if debug_enabled:
+            logger.debug(
+                "Newton step abort call=%d reason=nonfinite_g0 total_dt=%.3fs",
+                step_call_id,
+                time.perf_counter() - step_t0,
+            )
         return op, diag
 
     g_norm0 = residual_norm(g0, kind=normkind)
@@ -1385,6 +1468,12 @@ def newton_step_autodiff(
             step_norm=0.0, reg=float(reg0),
             ls_iters=0, solve_ok=False
         )
+        if debug_enabled:
+            logger.debug(
+                "Newton step abort call=%d reason=nonfinite_gnorm total_dt=%.3fs",
+                step_call_id,
+                time.perf_counter() - step_t0,
+            )
         return op, diag
 
 
@@ -1415,6 +1504,14 @@ def newton_step_autodiff(
             step_norm=0.0, reg=sol.reg,
             ls_iters=0, solve_ok=False
         )
+        if debug_enabled:
+            logger.debug(
+                "Newton step reject call=%d reason=linear_solve_failed g_norm0=%.6g reg=%.6g total_dt=%.3fs",
+                step_call_id,
+                g_norm0,
+                sol.reg,
+                time.perf_counter() - step_t0,
+            )
         return op, diag
 
     # immediately return accepted newton step if step magnitude is within step size tolerance
@@ -1432,6 +1529,15 @@ def newton_step_autodiff(
             step_norm=step_norm, reg=sol.reg,
             ls_iters=0, solve_ok=True
         )
+        if debug_enabled:
+            logger.debug(
+                "Newton step stall call=%d g_norm0=%.6g step_norm=%.6g reg=%.6g total_dt=%.3fs",
+                step_call_id,
+                g_norm0,
+                step_norm,
+                sol.reg,
+                time.perf_counter() - step_t0,
+            )
         return op, diag
 
     # --- backtrack newton step magnitude along solved direction ---
@@ -1459,6 +1565,18 @@ def newton_step_autodiff(
             step_norm=step_norm, reg=sol.reg,
             ls_iters=ls.ls_iters, solve_ok=True
         )
+        if debug_enabled:
+            logger.debug(
+                "Newton step reject call=%d reason=line_search g_norm0=%.6g best_norm=%.6g alpha=%.6g step_norm=%.6g reg=%.6g ls_iters=%d total_dt=%.3fs",
+                step_call_id,
+                g_norm0,
+                ls.best_norm,
+                ls.best_alpha,
+                step_norm,
+                sol.reg,
+                ls.ls_iters,
+                time.perf_counter() - step_t0,
+            )
         return op, diag
 
     # --- update decision variables based on newton step and unpack them to a new prime-dual trajectory ---
@@ -1471,6 +1589,18 @@ def newton_step_autodiff(
         step_norm=step_norm, reg=sol.reg,
         ls_iters=ls.ls_iters, solve_ok=True
     )
+    if debug_enabled:
+        logger.debug(
+            "Newton step accept call=%d g_norm0=%.6g g_trial=%.6g alpha=%.6g step_norm=%.6g reg=%.6g ls_iters=%d total_dt=%.3fs",
+            step_call_id,
+            g_norm0,
+            ls.g_norm_trial,
+            ls.alpha,
+            step_norm,
+            sol.reg,
+            ls.ls_iters,
+            time.perf_counter() - step_t0,
+        )
     return op_new, diag
 
 
@@ -2083,6 +2213,20 @@ def newton_solve_stationarity_autodiff(
     if not isinstance(max_rejects, int) or max_rejects < 0:
         raise ValueError(f"max_rejects must be int >= 0, got {max_rejects}")
 
+    debug_enabled = logger.isEnabledFor(logging.DEBUG)
+    solve_call_id = _next_debug_call_id("newton_solve_stationarity_autodiff")
+    solve_t0 = time.perf_counter() if debug_enabled else 0.0
+    if debug_enabled:
+        logger.debug(
+            "Newton solve start call=%d max_iters=%d max_rejects=%d opt_tol=%.3g dyn_tol=%.3g norm=%s",
+            solve_call_id,
+            max_iters,
+            max_rejects,
+            float(opt_tol),
+            float(dyn_tol),
+            normkind,
+        )
+
     op = op0
     op_last_accepted = op0
 
@@ -2153,6 +2297,13 @@ def newton_solve_stationarity_autodiff(
         dyn_vios.append(float("nan"))
         merit_norms.append(float("nan"))
         diag = _finalize(converged=False, iters=0, reason="nonfinite_residual_at_start")
+        if debug_enabled:
+            logger.debug(
+                "Newton solve abort call=%d reason=%s total_dt=%.3fs",
+                solve_call_id,
+                diag.reason,
+                time.perf_counter() - solve_t0,
+            )
         return op0, diag
 
     # update solver history
@@ -2164,6 +2315,15 @@ def newton_solve_stationarity_autodiff(
     # iteration 0
     if (opt0 <= opt_tol) and (dyn0 <= dyn_tol):
         diag = _finalize(converged=True, iters=0, reason="opt_dyn_tol_at_start")
+        if debug_enabled:
+            logger.debug(
+                "Newton solve converged call=%d iters=0 opt=%.6g dyn=%.6g merit=%.6g total_dt=%.3fs",
+                solve_call_id,
+                opt0,
+                dyn0,
+                merit0,
+                time.perf_counter() - solve_t0,
+            )
         return op, diag
 
     # start counter for number of reject newton_step calls
@@ -2212,7 +2372,22 @@ def newton_solve_stationarity_autodiff(
         # ---- compute metrics at current op ----
         optk, dynk, meritk, okk = _compute_metrics(op)
 
-        logger.debug(f"Newton iter {k+1}/{max_iters}: optk={optk}, dynk={dynk}, step-diagnostics={step_diag}")
+        if debug_enabled:
+            logger.debug(
+                "Newton iter call=%d iter=%d/%d accepted=%s solve_ok=%s alpha=%.6g reg=%.6g step_norm=%.6g opt=%.6g dyn=%.6g merit=%.6g reject_streak=%d",
+                solve_call_id,
+                k + 1,
+                max_iters,
+                step_diag.accepted,
+                step_diag.solve_ok,
+                step_diag.alpha,
+                step_diag.reg,
+                step_diag.step_norm,
+                optk,
+                dynk,
+                meritk,
+                reject_streak,
+            )
         
         # at each iteration, check if should be exited 
         # immediately based upon non-finite metrics
@@ -2221,6 +2396,14 @@ def newton_solve_stationarity_autodiff(
             dyn_vios.append(float("nan"))
             merit_norms.append(float("nan"))
             diag = _finalize(converged=False, iters=k + 1, reason="nonfinite_residual")
+            if debug_enabled:
+                logger.debug(
+                    "Newton solve abort call=%d iters=%d reason=%s total_dt=%.3fs",
+                    solve_call_id,
+                    k + 1,
+                    diag.reason,
+                    time.perf_counter() - solve_t0,
+                )
             return (op_last_accepted if return_last_accepted else op), diag
 
         # update solver history
@@ -2231,6 +2414,16 @@ def newton_solve_stationarity_autodiff(
         # check for solver convergence at iteration k
         if (optk <= opt_tol) and (dynk <= dyn_tol):
             diag = _finalize(converged=True, iters=k + 1, reason="opt_dyn_tol")
+            if debug_enabled:
+                logger.debug(
+                    "Newton solve converged call=%d iters=%d opt=%.6g dyn=%.6g merit=%.6g total_dt=%.3fs",
+                    solve_call_id,
+                    k + 1,
+                    optk,
+                    dynk,
+                    meritk,
+                    time.perf_counter() - solve_t0,
+                )
             return op, diag
 
         # Stall signal: newton_step decided dz is "too small" and returned accepted=True, alpha==0
@@ -2239,14 +2432,50 @@ def newton_solve_stationarity_autodiff(
             reason = "opt_dyn_tol_and_step_stall" if converged else "step_stall_before_opt_dyn_tol"
             diag = _finalize(converged=converged, iters=k + 1, reason=reason)
             op_ret = op if converged else (op_last_accepted if return_last_accepted else op)
+            if debug_enabled:
+                logger.debug(
+                    "Newton solve stop call=%d iters=%d reason=%s opt=%.6g dyn=%.6g merit=%.6g total_dt=%.3fs",
+                    solve_call_id,
+                    k + 1,
+                    reason,
+                    optk,
+                    dynk,
+                    meritk,
+                    time.perf_counter() - solve_t0,
+                )
             return op_ret, diag
 
         # Break if too many steps have been rejected to prevent endless loop
         if reject_streak >= max_rejects:
             diag = _finalize(converged=False, iters=k + 1, reason="too_many_rejected_steps")
+            if debug_enabled:
+                logger.debug(
+                    "Newton solve stop call=%d iters=%d reason=%s opt=%.6g dyn=%.6g merit=%.6g total_dt=%.3fs",
+                    solve_call_id,
+                    k + 1,
+                    diag.reason,
+                    optk,
+                    dynk,
+                    meritk,
+                    time.perf_counter() - solve_t0,
+                )
             return (op_last_accepted if return_last_accepted else op), diag
 
     diag = _finalize(converged=False, iters=max_iters, reason="max_iters")
+    if debug_enabled:
+        merit_last = merit_norms[-1] if merit_norms else float("nan")
+        opt_last = opt_vios[-1] if opt_vios else float("nan")
+        dyn_last = dyn_vios[-1] if dyn_vios else float("nan")
+        logger.debug(
+            "Newton solve stop call=%d iters=%d reason=%s opt=%.6g dyn=%.6g merit=%.6g total_dt=%.3fs",
+            solve_call_id,
+            max_iters,
+            diag.reason,
+            opt_last,
+            dyn_last,
+            merit_last,
+            time.perf_counter() - solve_t0,
+        )
     return (op_last_accepted if return_last_accepted else op), diag
 
 
@@ -2692,11 +2921,36 @@ def al_solve_autodiff(
     if nlgame.tg != op0.tg:
         raise ValueError(f"TimeGrid mismatch: nlgame.tg={nlgame.tg} vs op0.tg={op0.tg}")
 
+    debug_enabled = logger.isEnabledFor(logging.DEBUG)
+    al_call_id = _next_debug_call_id("al_solve_autodiff")
+    al_t0 = time.perf_counter() if debug_enabled else 0.0
+    if debug_enabled:
+        logger.debug(
+            "AL outer solve start call=%d max_outer_iters=%d newton_max_iters=%d rho_increase=%.6g rho_max=%.6g",
+            al_call_id,
+            max_iters,
+            newton_max_iters,
+            rho_increase,
+            rho_max,
+        )
+
     op = op0
     alstate = alstate0
     hist: List[altypes.ALSolverOuterIterDiag] = []
 
     for k in range(max_iters):
+        if debug_enabled:
+            logger.debug(
+                "AL outer iter start call=%d iter=%d/%d rho_ineq_max=%.6g rho_eq_max=%.6g lam_ineq_max=%.6g lam_eq_max=%.6g",
+                al_call_id,
+                k + 1,
+                max_iters,
+                float(jnp.max(alstate.rho_ineq)) if alstate.rho_ineq.size else 0.0,
+                float(jnp.max(alstate.rho_eq)) if alstate.rho_eq.size else 0.0,
+                float(jnp.max(alstate.lam_ineq)) if alstate.lam_ineq.size else 0.0,
+                float(jnp.max(alstate.lam_eq)) if alstate.lam_eq.size else 0.0,
+            )
+
         # ---- 1) inner solve: newton root finding of G=0 with fixed (λ,ρ) ----
         op, newton_diag = newton_solve_stationarity_autodiff(
             nlgame, op, alstate,
@@ -2774,7 +3028,21 @@ def al_solve_autodiff(
             lam_eq_max=float(jnp.max(alstate.lam_eq)) if alstate.lam_eq.size else 0.0,
         ))
 
-        logger.debug(hist)
+        if debug_enabled:
+            logger.debug(
+                "AL outer iter done call=%d iter=%d/%d newton_reason=%s newton_iters=%d newton_converged=%s residual=%.6g opt=%.6g dyn=%.6g ineq=%.6g eq=%.6g",
+                al_call_id,
+                k + 1,
+                max_iters,
+                newton_diag.reason,
+                newton_diag.iters,
+                newton_diag.converged,
+                g_norm,
+                opt_vio,
+                dyn_vio,
+                ineq_vio,
+                eq_vio,
+            )
 
         # ---- 5) convergence check ----
         if (
@@ -2784,6 +3052,13 @@ def al_solve_autodiff(
             (opt_vio <= opt_tol)
         ):
             diag = altypes.ALSolverDiag(converged=True, iters=k + 1, reason="converged", history=tuple(hist))
+            if debug_enabled:
+                logger.debug(
+                    "AL outer solve converged call=%d iters=%d total_dt=%.3fs",
+                    al_call_id,
+                    k + 1,
+                    time.perf_counter() - al_t0,
+                )
             return op, alstate, diag
 
         # ---- 3) Dual ascent update on λ (uses values in canonical order) ----
@@ -2793,4 +3068,12 @@ def al_solve_autodiff(
         alstate = rho_increase_schedule(alstate, rho_increase=rho_increase, rho_max=rho_max, validate=True)
 
     diag = altypes.ALSolverDiag(converged=False, iters=max_iters, reason="max_outer_iters", history=tuple(hist))
+    if debug_enabled:
+        logger.debug(
+            "AL outer solve stop call=%d iters=%d reason=%s total_dt=%.3fs",
+            al_call_id,
+            max_iters,
+            diag.reason,
+            time.perf_counter() - al_t0,
+        )
     return op, alstate, diag
