@@ -416,10 +416,14 @@ def test_build_constraint_step_linearizations_orders_blocks_and_steps_and_slices
     assert ineq_lins[0].k == 0 and ineq_lins[0].cdim == 1
     assert ineq_lins[1].k == 2 and ineq_lins[1].cdim == 1
     assert ineq_lins[2].k == 1 and ineq_lins[2].cdim == 2
+    assert ineq_lins[0].func is cA
+    assert ineq_lins[1].func is cA
+    assert ineq_lins[2].func is cB
 
     assert eq_lins[0].k == nt - 1
     assert eq_lins[0].terminal is True
     assert eq_lins[0].Ju is None
+    assert eq_lins[0].func is cT
 
     # Check slices: A@0 consumes [0:1], A@2 consumes [1:2], B@1 consumes [2:4]
     assert ineq_lins[0].sl == slice(0, 1)
@@ -501,6 +505,8 @@ def test_accumulate_Jt_weighted_vector_matches_manual_sum():
         Jx=Jx3, Ju=Ju3,
         sl=slice(2, 4),
     )
+    assert l1.func is None
+    assert l3.func is None
 
     dX, dU = pdg_con.accumulate_Jt_weighted_vector(
         lins=(l1, l3),
@@ -544,6 +550,7 @@ def test_accumulate_Jt_weighted_vector_terminal_instance_only_updates_dX():
         Jx=JxT, Ju=None,
         sl=slice(0, 1),
     )
+    assert lT.func is None
 
     dX, dU = pdg_con.accumulate_Jt_weighted_vector(
         lins=(lT,),

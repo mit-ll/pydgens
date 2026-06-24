@@ -249,6 +249,11 @@ class ConstraintStepLinearization:
     sl : slice
         Slice into the corresponding flattened λ/ρ vector selecting the (cdim,) entries
         for this instance in the canonical stacking order.
+    func : callable or None
+        Original constraint kernel used to build this linearization. This is optional
+        so hand-built test linearizations can still provide only `(c, Jx, Ju)`, but
+        solver code can use it when higher-order derivatives of the same constraint
+        component are needed.
     """
     kind: ConstraintKind
     k: int
@@ -258,6 +263,7 @@ class ConstraintStepLinearization:
     Jx: jnp.ndarray
     Ju: Optional[jnp.ndarray]
     sl: slice
+    func: Union[StepConstraintFn, TerminalConstraintFn, None] = None
 
 
 def _normalize_constraint_output_1d(c_val: jnp.ndarray, expected_dim: int) -> jnp.ndarray:
@@ -426,12 +432,12 @@ def build_constraint_step_linearizations(
 
                 if b.terminal:
                     c, Jx = _linearize_terminal_constraint_kernel(b.func, ts[k], xs[k], b.cdim_out_step)
-                    out.append(ConstraintStepLinearization(kind, k, True, b.cdim_out_step, c, Jx, None, sl))
+                    out.append(ConstraintStepLinearization(kind, k, True, b.cdim_out_step, c, Jx, None, sl, b.func))
                 else:
                     if k == nt - 1:
                         raise ValueError("Non-terminal block has active terminal node nt-1; use terminal=True instead.")
                     c, Jx, Ju = _linearize_step_constraint_kernel(b.func, ts[k], xs[k], us[k], b.cdim_out_step)
-                    out.append(ConstraintStepLinearization(kind, k, False, b.cdim_out_step, c, Jx, Ju, sl))
+                    out.append(ConstraintStepLinearization(kind, k, False, b.cdim_out_step, c, Jx, Ju, sl, b.func))
         return tuple(out)
 
     return build("ineq", constraints.ineq_blocks), build("eq", constraints.eq_blocks)
