@@ -15,8 +15,9 @@ import time
 
 from typing import Tuple, Literal, Callable, List, get_args
 from dataclasses import dataclass
-from functools import singledispatch
+from functools import singledispatch, partial
 
+import pydgens.ir.timetypes as timetypes
 import pydgens.ir.trajectorytypes as trajtypes
 import pydgens.ir.systemtypes as systypes
 import pydgens.ir.costtypes as costtypes
@@ -962,6 +963,35 @@ def jacobian_al_residual_flat_autodiff(
     return H
 
 
+@partial(jax.jit, static_argnums=(0,))
+def _running_cost_local_hessians_trajectory(
+    costfn_i: Callable,
+    ts: jnp.ndarray,
+    xs: jnp.ndarray,
+    us_i: jnp.ndarray,
+) -> jnp.ndarray:
+    """Batch Hessians of running(t, x, u_i) with respect to concatenated [x, u_i]."""
+    nx = xs.shape[1]
+
+    def hess_one(t, x, u_i):
+        def cost_xu(xu):
+            return costfn_i(t, xu[:nx], xu[nx:])
+
+        return jax.hessian(cost_xu)(jnp.concatenate([x, u_i]))
+
+    return jax.vmap(hess_one, in_axes=(0, 0, 0))(ts, xs, us_i)
+
+
+@partial(jax.jit, static_argnums=(0,))
+def _terminal_cost_hessian(
+    termfn_i: Callable,
+    t: jnp.ndarray,
+    x: jnp.ndarray,
+) -> jnp.ndarray:
+    """Hessian of terminal(t, x) with respect to x."""
+    return jax.hessian(lambda x_: termfn_i(t, x_))(x)
+
+
 def jacobian_al_residual_flat_structured(
     nlgame: gametypes.NonlinearGameType2,
     z: jnp.ndarray,
@@ -975,18 +1005,21 @@ def jacobian_al_residual_flat_structured(
     """
     Experimental structured Jacobian backend for the packed AL residual.
 
-    This first slice assembles only the dynamics-related first-order blocks:
+    This backend currently assembles:
       - feasibility rows: ∂D/∂X and ∂D/∂U
       - stationarity rows: ∂(∇(μᵀD))/∂μ
+      - when include_second_order=True, player-local cost Hessian blocks
 
-    Cost Hessians, auxiliary-constraint Hessians, and dynamics second-order terms
-    are intentionally omitted for now. Therefore this backend is exact for
-    linear-dynamics, zero/linear-cost, no-curvature test problems, and is currently
-    intended for validation and incremental development rather than production solves.
+    Auxiliary-constraint Hessians and nonlinear-dynamics second-order terms are
+    intentionally omitted for now. Therefore this backend is exact for linear
+    dynamics with no auxiliary constraints and player-local costs whose curvature
+    is captured by the assembled cost Hessian blocks.
     """
-    if include_second_order:
+    if include_second_order and (
+        nlgame.constraints.nc_ineq != 0 or nlgame.constraints.nc_eq != 0
+    ):
         raise NotImplementedError(
-            "Structured AL Jacobian currently implements only first-order dynamics blocks."
+            "Structured AL Jacobian does not yet include auxiliary-constraint curvature."
         )
     if ineq_activation not in {"altro", "none"}:
         raise ValueError(f"Unknown ineq_activation={ineq_activation!r}")
@@ -1095,6 +1128,62 @@ def jacobian_al_residual_flat_structured(
                 r_u = player_u_row0[i] + k * nui + c
                 for b in range(nx):
                     H_np[r_u, mu_col(k, i, b)] += B_np[k, b, u_joint]
+
+    if include_second_order:
+        ts = timetypes.compute_ts(op.tg).astype(op.xs.dtype)
+
+        for i in range(N):
+            cost_i = nlgame.costs[i]
+            u0_i = int(u_starts[i])
+            nui = int(u_splits[i])
+            H_xu_all = np.asarray(
+                jax.device_get(
+                    _running_cost_local_hessians_trajectory(
+                        cost_i.running,
+                        ts[:-1],
+                        op.xs[:-1],
+                        op.us[:, u0_i:u0_i + nui],
+                    )
+                )
+            )
+
+            for k in range(K):
+                H_xu = H_xu_all[k]
+                H_xx = H_xu[:nx, :nx]
+                H_xu_i = H_xu[:nx, nx:]
+                H_ux = H_xu[nx:, :nx]
+                H_uu = H_xu[nx:, nx:]
+
+                # Running cost at stage k contributes to dLdX[:, k] only if x_k
+                # is a decision variable; x0 is fixed and has no residual row.
+                if k > 0:
+                    j_tail = k - 1
+                    for a in range(nx):
+                        r_x = player_x_row0[i] + j_tail * nx + a
+                        for b in range(nx):
+                            H_np[r_x, x_col(j_tail, b)] += H_xx[a, b]
+                        for c in range(nui):
+                            H_np[r_x, u_col(k, u0_i + c)] += H_xu_i[a, c]
+
+                for a in range(nui):
+                    r_u = player_u_row0[i] + k * nui + a
+                    if k > 0:
+                        for b in range(nx):
+                            H_np[r_u, x_col(k - 1, b)] += H_ux[a, b]
+                    for c in range(nui):
+                        H_np[r_u, u_col(k, u0_i + c)] += H_uu[a, c]
+
+            if cost_i.terminal is not None:
+                H_T = np.asarray(
+                    jax.device_get(
+                        _terminal_cost_hessian(cost_i.terminal, ts[-1], op.xs[-1])
+                    )
+                )
+                j_tail = K - 1
+                for a in range(nx):
+                    r_x = player_x_row0[i] + j_tail * nx + a
+                    for b in range(nx):
+                        H_np[r_x, x_col(j_tail, b)] += H_T[a, b]
 
     return jnp.asarray(H_np)
 
