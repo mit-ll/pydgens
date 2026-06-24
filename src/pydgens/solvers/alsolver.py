@@ -1009,18 +1009,13 @@ def jacobian_al_residual_flat_structured(
       - feasibility rows: ∂D/∂X and ∂D/∂U
       - stationarity rows: ∂(∇(μᵀD))/∂μ
       - when include_second_order=True, player-local cost Hessian blocks
+      - when include_second_order=True, auxiliary-constraint JᵀρJ penalty blocks
 
-    Auxiliary-constraint Hessians and nonlinear-dynamics second-order terms are
-    intentionally omitted for now. Therefore this backend is exact for linear
-    dynamics with no auxiliary constraints and player-local costs whose curvature
-    is captured by the assembled cost Hessian blocks.
+    Nonlinear auxiliary-constraint Hessian terms and nonlinear-dynamics second-order
+    terms are intentionally omitted for now. Therefore this backend is exact for
+    linear dynamics, player-local costs whose curvature is captured by the assembled
+    cost Hessian blocks, and linear auxiliary constraints.
     """
-    if include_second_order and (
-        nlgame.constraints.nc_ineq != 0 or nlgame.constraints.nc_eq != 0
-    ):
-        raise NotImplementedError(
-            "Structured AL Jacobian does not yet include auxiliary-constraint curvature."
-        )
     if ineq_activation not in {"altro", "none"}:
         raise ValueError(f"Unknown ineq_activation={ineq_activation!r}")
 
@@ -1222,6 +1217,77 @@ def jacobian_al_residual_flat_structured(
                     r_x = player_x_row0[i] + j_tail * nx + a
                     for b in range(nx):
                         H_np[r_x, x_col(j_tail, b)] += H_T[a, b]
+
+        # Auxiliary constraints are shared across players in the current AL
+        # residual. Their gradient contribution is added to every player's
+        # stationarity residual, so each curvature block below is broadcast into
+        # all player-stationarity row groups.
+        #
+        # This slice assembles the exact penalty Hessian for linear constraints:
+        #   ∇² 1/2 CᵀρC = Jᵀ diag(ρ_active) J
+        # For nonlinear constraints, the omitted term is
+        #   Σ_m (λ_m + ρ_m c_m) ∇²C_m
+        # so this remains a Gauss-Newton/linearization block until constraint
+        # Hessian support is added.
+        def add_constraint_penalty_curvature(
+            lin: contypes.ConstraintStepLinearization,
+            weights: np.ndarray,
+        ) -> None:
+            Jx = np.asarray(jax.device_get(lin.Jx))
+            Ju = None if lin.Ju is None else np.asarray(jax.device_get(lin.Ju))
+            wJx = weights[:, None] * Jx
+            H_xx = Jx.T @ wJx
+
+            H_xu = H_ux = H_uu = None
+            if Ju is not None:
+                wJu = weights[:, None] * Ju
+                H_xu = Jx.T @ wJu
+                H_ux = Ju.T @ wJx
+                H_uu = Ju.T @ wJu
+
+            # Constraint state index k maps to decision tail k - 1. k == 0 is
+            # the fixed initial condition, so there are no X rows/columns for it.
+            has_x_decision = lin.k > 0
+            j_tail = lin.k - 1
+
+            for p in range(N):
+                if has_x_decision:
+                    for a in range(nx):
+                        r_x = player_x_row0[p] + j_tail * nx + a
+                        for b in range(nx):
+                            H_np[r_x, x_col(j_tail, b)] += H_xx[a, b]
+                        if H_xu is not None:
+                            for b in range(nu):
+                                H_np[r_x, u_col(lin.k, b)] += H_xu[a, b]
+
+                if H_ux is None or H_uu is None:
+                    continue
+
+                p_u0 = int(u_starts[p])
+                nup = int(u_splits[p])
+                for c in range(nup):
+                    u_joint = p_u0 + c
+                    r_u = player_u_row0[p] + lin.k * nup + c
+                    if has_x_decision:
+                        for b in range(nx):
+                            H_np[r_u, x_col(j_tail, b)] += H_ux[u_joint, b]
+                    for b in range(nu):
+                        H_np[r_u, u_col(lin.k, b)] += H_uu[u_joint, b]
+
+        for lin in ingredients.ineq_lins:
+            rho = np.asarray(jax.device_get(alstate.rho_ineq[lin.sl]))
+            if ineq_activation == "altro":
+                lam = np.asarray(jax.device_get(alstate.lam_ineq[lin.sl]))
+                c = np.asarray(jax.device_get(lin.c))
+                active = ((c >= 0.0) | (lam > 0.0)).astype(rho.dtype)
+                weights = rho * active
+            else:
+                weights = rho
+            add_constraint_penalty_curvature(lin, weights)
+
+        for lin in ingredients.eq_lins:
+            weights = np.asarray(jax.device_get(alstate.rho_eq[lin.sl]))
+            add_constraint_penalty_curvature(lin, weights)
 
     return jnp.asarray(H_np)
 
