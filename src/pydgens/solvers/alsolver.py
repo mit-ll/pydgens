@@ -237,19 +237,23 @@ def _gradient_aug_lagrangian_trajectory(
     K = nt - 1
 
     # ---- shared auxiliary constraint gradients (compute once) ----
-    # NOTE: both of these functions (*_constraints and *_penalty) independently 
-    # call build_constraint_step_linearizations with the same inputs,
-    # thus this is redundant work. Instead, we should call this once
-    # and pass the results to both the constraints and penalty computations
-    dLC_dX, dLC_dU = gradient_aug_lagrangian_trajectory_constraints(
+    ineq_lins, eq_lins = contypes.build_constraint_step_linearizations(
         constraints=nlgame.constraints,
-        alstate=alstate,
         op=op,
     )
-    dLP_dX, dLP_dU = gradient_aug_lagrangian_trajectory_penalty(
+    dLC_dX, dLC_dU = _gradient_aug_lagrangian_trajectory_constraints_from_linearizations(
         constraints=nlgame.constraints,
         alstate=alstate,
         op=op,
+        ineq_lins=ineq_lins,
+        eq_lins=eq_lins,
+    )
+    dLP_dX, dLP_dU = _gradient_aug_lagrangian_trajectory_penalty_from_linearizations(
+        constraints=nlgame.constraints,
+        alstate=alstate,
+        op=op,
+        ineq_lins=ineq_lins,
+        eq_lins=eq_lins,
         ineq_activation=ineq_activation,
     )
 
@@ -447,6 +451,26 @@ def gradient_aug_lagrangian_trajectory_constraints(
     # Build per-step constraint values/Jacobians once (canonical stacking order)
     ineq_lins, eq_lins = contypes.build_constraint_step_linearizations(constraints=constraints, op=op)
 
+    return _gradient_aug_lagrangian_trajectory_constraints_from_linearizations(
+        constraints=constraints,
+        alstate=alstate,
+        op=op,
+        ineq_lins=ineq_lins,
+        eq_lins=eq_lins,
+    )
+
+
+def _gradient_aug_lagrangian_trajectory_constraints_from_linearizations(
+    constraints: contypes.GameConstraintGridMap,
+    alstate: altypes.JointAugmentedLagrangianState,
+    op: trajtypes.FixedStepPrimalDualTrajectory,
+    *,
+    ineq_lins: Tuple[contypes.ConstraintStepLinearization, ...],
+    eq_lins: Tuple[contypes.ConstraintStepLinearization, ...],
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """
+    Accumulate the linear auxiliary-constraint gradient from prebuilt linearizations.
+    """
     # Validate multiplier shapes match the stacked constraint dimensions
     if alstate.lam_ineq.shape != (constraints.nc_ineq,):
         raise ValueError(
@@ -533,6 +557,31 @@ def gradient_aug_lagrangian_trajectory_penalty(
 
     # Build per-step constraint values/Jacobians once (canonical stacking order)
     ineq_lins, eq_lins = contypes.build_constraint_step_linearizations(constraints=constraints, op=op)
+
+    return _gradient_aug_lagrangian_trajectory_penalty_from_linearizations(
+        constraints=constraints,
+        alstate=alstate,
+        op=op,
+        ineq_lins=ineq_lins,
+        eq_lins=eq_lins,
+        ineq_activation=ineq_activation,
+    )
+
+
+def _gradient_aug_lagrangian_trajectory_penalty_from_linearizations(
+    constraints: contypes.GameConstraintGridMap,
+    alstate: altypes.JointAugmentedLagrangianState,
+    op: trajtypes.FixedStepPrimalDualTrajectory,
+    *,
+    ineq_lins: Tuple[contypes.ConstraintStepLinearization, ...],
+    eq_lins: Tuple[contypes.ConstraintStepLinearization, ...],
+    ineq_activation: Literal["altro", "none"] = "altro",
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """
+    Accumulate the quadratic auxiliary-constraint penalty gradient from prebuilt linearizations.
+    """
+    if ineq_activation not in ("altro", "none"):
+        raise ValueError("ineq_activation must be one of {'altro','none'}")
 
     # Validate penalty shapes match stacked constraint dimensions
     if alstate.rho_ineq.shape != (constraints.nc_ineq,):

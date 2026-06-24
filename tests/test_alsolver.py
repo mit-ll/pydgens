@@ -1100,10 +1100,12 @@ def test_gradient_aug_lagrangian_trajectory_shapes_and_shared_broadcast(monkeypa
     shared_X = jnp.ones((nt, nx), dtype=jnp.float32)
     shared_U = jnp.ones((K, nu), dtype=jnp.float32) * 2.0
 
-    monkeypatch.setattr(pdg_alsolver, "gradient_aug_lagrangian_trajectory_constraints",
-                        lambda constraints, alstate, op: (shared_X, shared_U))
-    monkeypatch.setattr(pdg_alsolver, "gradient_aug_lagrangian_trajectory_penalty",
-                        lambda constraints, alstate, op, ineq_activation="altro": (shared_X, shared_U))
+    monkeypatch.setattr(pdg_alsolver.contypes, "build_constraint_step_linearizations",
+                        lambda constraints, op: (tuple(), tuple()))
+    monkeypatch.setattr(pdg_alsolver, "_gradient_aug_lagrangian_trajectory_constraints_from_linearizations",
+                        lambda **kwargs: (shared_X, shared_U))
+    monkeypatch.setattr(pdg_alsolver, "_gradient_aug_lagrangian_trajectory_penalty_from_linearizations",
+                        lambda **kwargs: (shared_X, shared_U))
 
     # Player-specific cost gradients: zero
     monkeypatch.setattr(pdg_alsolver.costtypes, "gradient_cost_local_ctrl_playerwise_trajectory",
@@ -1131,6 +1133,69 @@ def test_gradient_aug_lagrangian_trajectory_shapes_and_shared_broadcast(monkeypa
         np.testing.assert_allclose(np.array(dX_all[i]), expected_X)
         np.testing.assert_allclose(np.array(dU_all[i]), expected_U)
 
+
+def test_gradient_aug_lagrangian_trajectory_reuses_constraint_linearizations_for_linear_and_penalty(monkeypatch):
+    nlgame, op, alstate = _make_dummy_game_and_op()
+    N, nt, nx, nu = nlgame.N, nlgame.nt, nlgame.nx, nlgame.nu
+    K = nt - 1
+
+    calls = {"count": 0}
+
+    def fake_build_constraint_step_linearizations(constraints, op):
+        calls["count"] += 1
+        return tuple(), tuple()
+
+    monkeypatch.setattr(
+        pdg_alsolver.contypes,
+        "build_constraint_step_linearizations",
+        fake_build_constraint_step_linearizations,
+    )
+    monkeypatch.setattr(
+        pdg_alsolver,
+        "_gradient_aug_lagrangian_trajectory_constraints_from_linearizations",
+        lambda **kwargs: (
+            jnp.ones((nt, nx), dtype=jnp.float32),
+            jnp.ones((K, nu), dtype=jnp.float32),
+        ),
+    )
+    monkeypatch.setattr(
+        pdg_alsolver,
+        "_gradient_aug_lagrangian_trajectory_penalty_from_linearizations",
+        lambda **kwargs: (
+            jnp.ones((nt, nx), dtype=jnp.float32),
+            jnp.ones((K, nu), dtype=jnp.float32),
+        ),
+    )
+    monkeypatch.setattr(
+        pdg_alsolver.costtypes,
+        "gradient_cost_local_ctrl_playerwise_trajectory",
+        lambda **kwargs: (
+            jnp.zeros((nt, nx), jnp.float32),
+            jnp.zeros((K, int(nlgame.u_splits[int(kwargs["player_i"])])), jnp.float32),
+        ),
+    )
+    monkeypatch.setattr(
+        pdg_alsolver,
+        "gradient_aug_lagrangian_playerwise_trajectory_dynamics",
+        lambda **kwargs: (
+            jnp.zeros((nt, nx), jnp.float32),
+            jnp.zeros((K, nu), jnp.float32),
+        ),
+    )
+
+    dX_all, dU_all = pdg_alsolver._gradient_aug_lagrangian_trajectory(
+        nlgame,
+        op,
+        alstate,
+        discretize_method="rk2",
+        ineq_activation="altro",
+    )
+
+    assert calls["count"] == 1
+    assert dX_all.shape == (N, nt, nx)
+    assert dU_all.shape == (N, K, nu)
+
+
 def test_gradient_aug_lagrangian_trajectory_inserts_local_control_slices(monkeypatch):
     nlgame, op, alstate = _make_dummy_game_and_op()
     N, nt, nx, nu = nlgame.N, nlgame.nt, nlgame.nx, nlgame.nu
@@ -1138,12 +1203,14 @@ def test_gradient_aug_lagrangian_trajectory_inserts_local_control_slices(monkeyp
     u_splits = np.array(nlgame.u_splits)
 
     # No shared constraints / no dynamics
-    monkeypatch.setattr(pdg_alsolver, "gradient_aug_lagrangian_trajectory_constraints",
-                        lambda constraints, alstate, op: (jnp.zeros((nt, nx), jnp.float32),
-                                                         jnp.zeros((K, nu), jnp.float32)))
-    monkeypatch.setattr(pdg_alsolver, "gradient_aug_lagrangian_trajectory_penalty",
-                        lambda constraints, alstate, op, ineq_activation="altro": (jnp.zeros((nt, nx), jnp.float32),
-                                                                                    jnp.zeros((K, nu), jnp.float32)))
+    monkeypatch.setattr(pdg_alsolver.contypes, "build_constraint_step_linearizations",
+                        lambda constraints, op: (tuple(), tuple()))
+    monkeypatch.setattr(pdg_alsolver, "_gradient_aug_lagrangian_trajectory_constraints_from_linearizations",
+                        lambda **kwargs: (jnp.zeros((nt, nx), jnp.float32),
+                                          jnp.zeros((K, nu), jnp.float32)))
+    monkeypatch.setattr(pdg_alsolver, "_gradient_aug_lagrangian_trajectory_penalty_from_linearizations",
+                        lambda **kwargs: (jnp.zeros((nt, nx), jnp.float32),
+                                          jnp.zeros((K, nu), jnp.float32)))
     monkeypatch.setattr(pdg_alsolver, "gradient_aug_lagrangian_playerwise_trajectory_dynamics",
                         lambda **kwargs: (jnp.zeros((nt, nx), jnp.float32),
                                           jnp.zeros((K, nu), jnp.float32)))
@@ -1181,12 +1248,14 @@ def test_gradient_aug_lagrangian_trajectory_adds_joint_dynamics_control_to_each_
     K = nt - 1
 
     # No shared constraints / no cost
-    monkeypatch.setattr(pdg_alsolver, "gradient_aug_lagrangian_trajectory_constraints",
-                        lambda constraints, alstate, op: (jnp.zeros((nt, nx), jnp.float32),
-                                                         jnp.zeros((K, nu), jnp.float32)))
-    monkeypatch.setattr(pdg_alsolver, "gradient_aug_lagrangian_trajectory_penalty",
-                        lambda constraints, alstate, op, ineq_activation="altro": (jnp.zeros((nt, nx), jnp.float32),
-                                                                                    jnp.zeros((K, nu), jnp.float32)))
+    monkeypatch.setattr(pdg_alsolver.contypes, "build_constraint_step_linearizations",
+                        lambda constraints, op: (tuple(), tuple()))
+    monkeypatch.setattr(pdg_alsolver, "_gradient_aug_lagrangian_trajectory_constraints_from_linearizations",
+                        lambda **kwargs: (jnp.zeros((nt, nx), jnp.float32),
+                                          jnp.zeros((K, nu), jnp.float32)))
+    monkeypatch.setattr(pdg_alsolver, "_gradient_aug_lagrangian_trajectory_penalty_from_linearizations",
+                        lambda **kwargs: (jnp.zeros((nt, nx), jnp.float32),
+                                          jnp.zeros((K, nu), jnp.float32)))
     monkeypatch.setattr(pdg_alsolver.costtypes, "gradient_cost_local_ctrl_playerwise_trajectory",
                         lambda **kwargs: (jnp.zeros((nt, nx), jnp.float32),
                                           jnp.zeros((K, int(nlgame.u_splits[int(kwargs["player_i"])])), jnp.float32)))
@@ -1248,17 +1317,22 @@ def test_gradient_aug_lagrangian_trajectory_reuses_dynamics_jacobians_across_pla
     )
 
     monkeypatch.setattr(
+        pdg_alsolver.contypes,
+        "build_constraint_step_linearizations",
+        lambda constraints, op: (tuple(), tuple()),
+    )
+    monkeypatch.setattr(
         pdg_alsolver,
-        "gradient_aug_lagrangian_trajectory_constraints",
-        lambda constraints, alstate, op: (
+        "_gradient_aug_lagrangian_trajectory_constraints_from_linearizations",
+        lambda **kwargs: (
             jnp.zeros((nt, nx), dtype=jnp.float32),
             jnp.zeros((K, nu), dtype=jnp.float32),
         ),
     )
     monkeypatch.setattr(
         pdg_alsolver,
-        "gradient_aug_lagrangian_trajectory_penalty",
-        lambda constraints, alstate, op, ineq_activation="altro": (
+        "_gradient_aug_lagrangian_trajectory_penalty_from_linearizations",
+        lambda **kwargs: (
             jnp.zeros((nt, nx), dtype=jnp.float32),
             jnp.zeros((K, nu), dtype=jnp.float32),
         ),
@@ -1853,6 +1927,81 @@ def test_compute_al_residual_struct_raises_on_timegrid_mismatch(monkeypatch):
 
     with pytest.raises(ValueError, match="TimeGrid"):
         pdg_alsolver.compute_al_residual_struct_from_traj(nlgame, op, SimpleNamespace(), discretize_method="euler", ineq_activation="altro")
+
+
+@pytest.mark.benchmark(group="alsolver-residual-001")
+def test_compute_al_residual_flat_from_decision_vars_warm_perf(benchmark):
+    tg = TimeGrid(nt=8, dt=0.1, t0=0.0)
+    nt = tg.nt
+    K = nt - 1
+    nx = 2
+    N = 2
+    u_splits = jnp.array([1, 1], dtype=jnp.int32)
+    nu = int(np.sum(np.asarray(u_splits)))
+
+    A = jnp.array([[0.0, 1.0], [-0.2, -0.1]], dtype=jnp.float32)
+    B = jnp.array([[0.0, 0.0], [1.0, 0.5]], dtype=jnp.float32)
+
+    def f_cont(t, x, u):
+        return A @ x + B @ u
+
+    cs = SampledContinuousSystemType1(tg=tg, dynamics=f_cont, nx=nx, nu=nu)
+
+    def make_cost(i):
+        target = jnp.array([1.0 + i, 0.0], dtype=jnp.float32)
+
+        def running(t, x, u_i):
+            return 0.5 * (x - target) @ (x - target) + 0.1 * (u_i @ u_i)
+
+        def terminal(t, x):
+            return 2.0 * ((x - target) @ (x - target))
+
+        return PlayerCostSpecContinuous(
+            running=running,
+            terminal=terminal,
+            control_domain=CostControlDomain.LOCAL,
+            control_coupling=CostControlStructure.LOCAL_ONLY,
+        )
+
+    constraints = GameConstraintGridMap(ineq_blocks=(), eq_blocks=())
+    nlgame = NonlinearGameType2(
+        cs=cs,
+        N=N,
+        costs=[make_cost(0), make_cost(1)],
+        constraints=constraints,
+        u_splits=u_splits,
+    )
+
+    xs = jnp.stack(
+        [
+            jnp.linspace(0.0, 1.0, nt, dtype=jnp.float32),
+            jnp.linspace(0.5, -0.5, nt, dtype=jnp.float32),
+        ],
+        axis=1,
+    )
+    us = jnp.ones((K, nu), dtype=jnp.float32) * 0.1
+    ls = jnp.zeros((K, N, nx), dtype=jnp.float32)
+    op = FixedStepPrimalDualTrajectory(tg=tg, xs=xs, us=us, ls=ls)
+    z = pdg_alsolver.pack_decision_vars_1d(op)
+    alstate = altypes.JointAugmentedLagrangianState(
+        lam_ineq=jnp.zeros((0,), dtype=jnp.float32),
+        rho_ineq=jnp.zeros((0,), dtype=jnp.float32),
+        lam_eq=jnp.zeros((0,), dtype=jnp.float32),
+        rho_eq=jnp.zeros((0,), dtype=jnp.float32),
+    )
+
+    def run():
+        g = pdg_alsolver.compute_al_residual_flat_from_decision_vars(
+            nlgame,
+            z,
+            op,
+            alstate,
+            discretize_method="euler",
+            ineq_activation="altro",
+        )
+        return g.block_until_ready()
+
+    benchmark(run)
 
 
 # -------------------------
