@@ -961,6 +961,144 @@ def jacobian_al_residual_flat_autodiff(
         )
     return H
 
+
+def jacobian_al_residual_flat_structured(
+    nlgame: gametypes.NonlinearGameType2,
+    z: jnp.ndarray,
+    template_op: trajtypes.FixedStepPrimalDualTrajectory,
+    alstate: altypes.JointAugmentedLagrangianState,
+    *,
+    discretize_method: str = "rk2",
+    ineq_activation: str = "altro",
+    include_second_order: bool = False,
+) -> jnp.ndarray:
+    """
+    Experimental structured Jacobian backend for the packed AL residual.
+
+    This first slice assembles only the dynamics-related first-order blocks:
+      - feasibility rows: ∂D/∂X and ∂D/∂U
+      - stationarity rows: ∂(∇(μᵀD))/∂μ
+
+    Cost Hessians, auxiliary-constraint Hessians, and dynamics second-order terms
+    are intentionally omitted for now. Therefore this backend is exact for
+    linear-dynamics, zero/linear-cost, no-curvature test problems, and is currently
+    intended for validation and incremental development rather than production solves.
+    """
+    if include_second_order:
+        raise NotImplementedError(
+            "Structured AL Jacobian currently implements only first-order dynamics blocks."
+        )
+    if ineq_activation not in {"altro", "none"}:
+        raise ValueError(f"Unknown ineq_activation={ineq_activation!r}")
+
+    z = jnp.asarray(z)
+    op = unpack_decision_vars(z, template_op, check_length=True)
+
+    K = op.nsteps
+    nx = op.nx
+    nu = op.nu
+    N = op.N
+
+    u_splits = np.asarray(nlgame.u_splits, dtype=int)
+    if u_splits.shape != (N,):
+        raise ValueError(f"u_splits must have shape (N,)={(N,)}, got {u_splits.shape}")
+    if int(u_splits.sum()) != nu:
+        raise ValueError(f"u_splits must sum to nu={nu}, got {u_splits.sum()}")
+    u_starts = np.cumsum(np.concatenate(([0], u_splits[:-1])))
+
+    ingredients = build_al_residual_ingredients(
+        nlgame,
+        op,
+        discretize_method=discretize_method,
+    )
+    if ingredients.dfd_dx is None or ingredients.dfd_du is None:
+        raise NotImplementedError(
+            "Structured AL Jacobian currently requires SampledContinuousSystemType1 dynamics."
+        )
+
+    A = ingredients.dfd_dx
+    B = ingredients.dfd_du
+
+    # Decision packing: z = [vec(X[1:]); vec(U); vec(mu)]
+    x_col0 = 0
+    u_col0 = K * nx
+    mu_col0 = u_col0 + K * nu
+    nz = mu_col0 + K * N * nx
+
+    # Residual packing: for each player [vec(dLdX_i); vec(dLdU_i_local)], then vec(D)
+    player_x_row0: List[int] = []
+    player_u_row0: List[int] = []
+    row = 0
+    for i in range(N):
+        player_x_row0.append(row)
+        row += K * nx
+        player_u_row0.append(row)
+        row += K * int(u_splits[i])
+    dyn_row0 = row
+    ng = dyn_row0 + K * nx
+
+    # This backend is an explicit block assembler, not a JIT kernel. Building the
+    # dense matrix through a host buffer avoids thousands of tiny JAX `.at` updates.
+    H_np = np.zeros((ng, nz), dtype=np.asarray(jax.device_get(z)).dtype)
+    A_np = np.asarray(jax.device_get(A))
+    B_np = np.asarray(jax.device_get(B))
+
+    def x_col(j_tail: int, b: int) -> int:
+        return x_col0 + j_tail * nx + b
+
+    def u_col(k: int, b: int) -> int:
+        return u_col0 + k * nu + b
+
+    def mu_col(k: int, i: int, b: int) -> int:
+        return mu_col0 + ((k * N + i) * nx) + b
+
+    # Feasibility rows: D_k = f_d(x_k, u_k) - x_{k+1}
+    for k in range(K):
+        for a in range(nx):
+            r_dyn = dyn_row0 + k * nx + a
+
+            # x_{k+1} is always a decision variable X[1:].
+            for b in range(nx):
+                H_np[r_dyn, x_col(k, b)] += -1.0 if a == b else 0.0
+
+            # x_k is a decision variable only for k >= 1; x_0 is fixed.
+            if k > 0:
+                for b in range(nx):
+                    H_np[r_dyn, x_col(k - 1, b)] += A_np[k, a, b]
+
+            for b in range(nu):
+                H_np[r_dyn, u_col(k, b)] += B_np[k, a, b]
+
+    # Stationarity rows, multiplier columns.
+    for i in range(N):
+        # State stationarity for decision states x_j, j=1..K.
+        for j_tail in range(K):
+            j = j_tail + 1
+            for a in range(nx):
+                r_x = player_x_row0[i] + j_tail * nx + a
+
+                # D_{j-1} contributes -mu_{j-1,i} to ∂L_i/∂x_j.
+                for b in range(nx):
+                    H_np[r_x, mu_col(j - 1, i, b)] += -1.0 if a == b else 0.0
+
+                # D_j contributes A_j.T @ mu_{j,i} when j is a stage index.
+                if j < K:
+                    for b in range(nx):
+                        H_np[r_x, mu_col(j, i, b)] += A_np[j, b, a]
+
+        # Local-control stationarity rows for player i.
+        u0_i = int(u_starts[i])
+        nui = int(u_splits[i])
+        for k in range(K):
+            for c in range(nui):
+                u_joint = u0_i + c
+                r_u = player_u_row0[i] + k * nui + c
+                for b in range(nx):
+                    H_np[r_u, mu_col(k, i, b)] += B_np[k, b, u_joint]
+
+    return jnp.asarray(H_np)
+
+
 def _validate_reg_params(
     *,
     reg0: float,

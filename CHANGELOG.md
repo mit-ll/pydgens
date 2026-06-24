@@ -12,9 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `pyproject.toml` reorganized optional dependencies into `test`, `profile`, `docs`, `visuals`, `dev` (all prior dependecies), and `full` (pass-through wrapper of `dev`) for clarity of the purpose of each dependency
 - `alsolver.py` Refactored augmented-Lagrangian residual assembly to reuse shared constraint linearizations and residual ingredients across stationarity-gradient computation.
 - `alsolver.py` Reduced duplicated residual work in the stationarity Newton metrics path by deriving optimality, dynamics violation, and merit metrics from a single structured AL residual evaluation.
+- `alsolver.py` Started experimental structured Jacobian backend work with a first-order dynamics block assembler for AL residual Jacobians.
 
 ### Added
 - `test_alsolver.py` Added regression and benchmark coverage for constraint-heavy AL residual and stationarity-metrics paths.
+- `test_alsolver.py` Added correctness and benchmark coverage comparing the experimental structured dynamics Jacobian slice against the autodiff Jacobian backend.
 - `alsolver.py` Added logger-oriented diagnostics for tracing AL solver progress and identifying expensive residual/Jacobian evaluation paths.
 
 ## [v1.0.0] - 2026.06.23

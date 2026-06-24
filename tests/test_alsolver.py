@@ -2537,6 +2537,61 @@ def _finite_difference_jacobian(f, z, eps=1e-6):
     return J
 
 
+def _make_linear_dynamics_only_al_problem(*, nt=5, dtype=jnp.float32):
+    tg = TimeGrid(nt=nt, dt=0.1, t0=0.0)
+    K = tg.nsteps
+    nx = 2
+    u_splits = jnp.array([1, 2], dtype=jnp.int32)
+    N = int(u_splits.shape[0])
+    nu = int(np.sum(np.asarray(u_splits)))
+
+    A = jnp.array([[0.0, 1.0], [-0.3, -0.2]], dtype=dtype)
+    B = jnp.array([[0.0, 0.4, -0.1], [1.0, 0.2, 0.5]], dtype=dtype)
+
+    def f_cont(t, x, u):
+        return A @ x + B @ u
+
+    cs = SampledContinuousSystemType1(tg=tg, dynamics=f_cont, nx=nx, nu=nu)
+
+    def make_zero_cost():
+        def running(t, x, u_i):
+            return jnp.array(0.0, dtype=x.dtype)
+
+        def terminal(t, x):
+            return jnp.array(0.0, dtype=x.dtype)
+
+        return PlayerCostSpecContinuous(
+            running=running,
+            terminal=terminal,
+            control_domain=CostControlDomain.LOCAL,
+            control_coupling=CostControlStructure.LOCAL_ONLY,
+        )
+
+    constraints = GameConstraintGridMap(ineq_blocks=(), eq_blocks=())
+    nlgame = NonlinearGameType2(
+        cs=cs,
+        N=N,
+        costs=[make_zero_cost() for _ in range(N)],
+        constraints=constraints,
+        u_splits=u_splits,
+    )
+
+    xs = (jnp.arange(nt * nx, dtype=dtype).reshape(nt, nx) * 0.1).at[0].set(
+        jnp.array([0.2, -0.1], dtype=dtype)
+    )
+    us = jnp.linspace(-0.2, 0.3, K * nu, dtype=dtype).reshape(K, nu)
+    ls = jnp.linspace(-0.4, 0.5, K * N * nx, dtype=dtype).reshape(K, N, nx)
+    op = FixedStepPrimalDualTrajectory(tg=tg, xs=xs, us=us, ls=ls)
+    alstate = altypes.JointAugmentedLagrangianState(
+        lam_ineq=jnp.zeros((0,), dtype=dtype),
+        rho_ineq=jnp.zeros((0,), dtype=dtype),
+        lam_eq=jnp.zeros((0,), dtype=dtype),
+        rho_eq=jnp.zeros((0,), dtype=dtype),
+    )
+
+    return nlgame, op, alstate
+
+
 def test_jacobian_al_residual_flat_autodiff_matches_finite_difference(monkeypatch):
     """
     Golden test: compare autodiff Jacobian of G(z) to finite-difference Jacobian
@@ -2634,6 +2689,93 @@ def test_jacobian_al_residual_flat_autodiff_matches_finite_difference(monkeypatc
     # disable float64 so other tests don't run under these conditions 
     # which can fail regression tests
     jax.config.update("jax_enable_x64", False)
+
+
+def test_jacobian_al_residual_flat_structured_dynamics_matches_autodiff_on_linear_problem():
+    """
+    First structured-Jacobian slice should be exact when omitted terms are zero:
+    linear dynamics, zero costs, and no auxiliary constraints.
+    """
+    nlgame, op, alstate = _make_linear_dynamics_only_al_problem(nt=5, dtype=jnp.float32)
+    z = pdg_alsolver.pack_decision_vars_1d(op)
+
+    H_ad = pdg_alsolver.jacobian_al_residual_flat_autodiff(
+        nlgame,
+        z,
+        op,
+        alstate,
+        discretize_method="euler",
+        ineq_activation="none",
+        mode="jacfwd",
+    )
+    H_struct = pdg_alsolver.jacobian_al_residual_flat_structured(
+        nlgame,
+        z,
+        op,
+        alstate,
+        discretize_method="euler",
+        ineq_activation="none",
+        include_second_order=False,
+    )
+
+    assert H_struct.shape == H_ad.shape
+    np.testing.assert_allclose(np.asarray(H_struct), np.asarray(H_ad), rtol=2e-5, atol=2e-5)
+
+
+def test_jacobian_al_residual_flat_structured_rejects_second_order_request():
+    nlgame, op, alstate = _make_linear_dynamics_only_al_problem(nt=4, dtype=jnp.float32)
+    z = pdg_alsolver.pack_decision_vars_1d(op)
+
+    with pytest.raises(NotImplementedError, match="first-order dynamics"):
+        pdg_alsolver.jacobian_al_residual_flat_structured(
+            nlgame,
+            z,
+            op,
+            alstate,
+            discretize_method="euler",
+            ineq_activation="none",
+            include_second_order=True,
+        )
+
+
+@pytest.mark.benchmark(group="alsolver-jacobian-dynamics-001")
+def test_jacobian_al_residual_flat_autodiff_dynamics_warm_perf(benchmark):
+    nlgame, op, alstate = _make_linear_dynamics_only_al_problem(nt=12, dtype=jnp.float32)
+    z = pdg_alsolver.pack_decision_vars_1d(op)
+
+    def run():
+        H = pdg_alsolver.jacobian_al_residual_flat_autodiff(
+            nlgame,
+            z,
+            op,
+            alstate,
+            discretize_method="euler",
+            ineq_activation="none",
+            mode="jacfwd",
+        )
+        return H.block_until_ready()
+
+    benchmark(run)
+
+
+@pytest.mark.benchmark(group="alsolver-jacobian-dynamics-001")
+def test_jacobian_al_residual_flat_structured_dynamics_warm_perf(benchmark):
+    nlgame, op, alstate = _make_linear_dynamics_only_al_problem(nt=12, dtype=jnp.float32)
+    z = pdg_alsolver.pack_decision_vars_1d(op)
+
+    def run():
+        H = pdg_alsolver.jacobian_al_residual_flat_structured(
+            nlgame,
+            z,
+            op,
+            alstate,
+            discretize_method="euler",
+            ineq_activation="none",
+            include_second_order=False,
+        )
+        return H.block_until_ready()
+
+    benchmark(run)
 
 
 # ---------- FD helper (x64 + Richardson) ----------
