@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `scripts/benchmark/compare_revision.py` automated script for running benchmarking test against past verion
 - `test_alsolver.py` Added regression and benchmark coverage for constraint-heavy AL residual and stationarity-metrics paths.
 - `test_alsolver.py` Added correctness and benchmark coverage comparing the experimental structured dynamics Jacobian slice against the autodiff Jacobian backend.
 - `alsolver.py` Added logger-oriented diagnostics for tracing AL solver progress and identifying expensive residual/Jacobian evaluation paths.
