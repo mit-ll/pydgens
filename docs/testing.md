@@ -42,7 +42,7 @@ interpreter that starts it; it does not create, locate, or modify an environment
 Start it with an environment that already has the test dependencies installed.
 
 ```bash
-uv run --extra test python scripts/benchmark/compare_revision.py \
+python scripts/benchmark/compare_revision.py \
   --baseline v1.0.0 \
   --k 'compute_al_residual_flat_from_decision_vars_warm_perf or compute_al_residual_flat_from_decision_vars_constraint_heavy_warm_perf or jacobian_al_residual_flat_autodiff_constraint_heavy_warm_perf or newton_solve_stationarity_start_metrics_constraint_heavy_warm_perf'
 ```
@@ -50,8 +50,9 @@ uv run --extra test python scripts/benchmark/compare_revision.py \
 Use `--repeat N` to collect repeated paired samples, `--storage PATH` to retain data
 outside the default `.benchmarks` directory, and `--allow-dirty` only when the current
 uncommitted source is intentionally being benchmarked. Run the script with `--help`
-for all options. Do not execute the script directly unless its shebang resolves to the
-intended Python environment.
+for all options. The comparison table labels saved rows with `baseline-` or `current-`.
+Do not execute the script directly unless its shebang resolves to the intended Python
+environment.
 
 Run comparisons on the same, otherwise-idle machine. Avoid comparing results from
 different operating systems, CPU models, Python versions, or dependency environments;
@@ -70,14 +71,13 @@ git worktree add "$BASELINE_DIR" "$BASELINE_REF"
 ```
 
 Use one Python environment for both runs. It must provide `pytest` and
-`pytest-benchmark`; for example, create or refresh a uv-managed environment and run
-the following commands through it:
+`pytest-benchmark`. Select that interpreter before running the commands below:
 
 ```bash
 cd "$REPO_ROOT"
-uv sync --extra test
 
-PYTHON="$(uv run --extra test python -c 'import sys; print(sys.executable)')"
+PYTHON="${PYTHON:-python}"
+"$PYTHON" -c 'import pytest_benchmark'
 ```
 
 Choose the stable benchmark subset to compare and a persistent local result store.

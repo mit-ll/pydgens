@@ -22,6 +22,11 @@ def run(command: list[str], *, cwd: Path, env: dict[str, str] | None = None) -> 
     subprocess.run(command, cwd=cwd, env=env, check=True)
 
 
+def status(message: str) -> None:
+    """Print a visible progress marker between verbose benchmark commands."""
+    print(f"\n{'=' * 72}\n{message}\n{'=' * 72}", flush=True)
+
+
 def git_output(repository: Path, *args: str) -> str:
     """Return stripped output from a Git command in ``repository``."""
     return subprocess.check_output(
@@ -175,6 +180,7 @@ def main() -> int:
     current_results: list[Path] = []
     baseline_created = False
     try:
+        status("Preparing baseline worktree")
         run(
             ["git", "worktree", "add", "--detach", str(baseline_dir), baseline_commit],
             cwd=repository,
@@ -186,6 +192,7 @@ def main() -> int:
         print(f"Storage:  {storage_uri}")
 
         for index in range(1, args.repeat + 1):
+            status(f"Benchmarking baseline: {args.baseline} (run {index}/{args.repeat})")
             baseline_before = json_files(storage)
             baseline_env = os.environ | {"PYTHONPATH": str(baseline_dir / "src")}
             run(
@@ -193,7 +200,7 @@ def main() -> int:
                     python=python,
                     test_file=test_file,
                     expression=args.expression,
-                    save_name=f"{args.name}-{baseline_commit[:12]}-run{index}",
+                    save_name=f"baseline-{args.name}-{baseline_commit[:12]}-run{index}",
                     storage=storage_uri,
                 ),
                 cwd=baseline_dir,
@@ -201,6 +208,7 @@ def main() -> int:
             )
             baseline_results.extend(sorted(json_files(storage) - baseline_before))
 
+            status(f"Benchmarking current revision: {current_commit[:12]} (run {index}/{args.repeat})")
             current_before = json_files(storage)
             current_env = os.environ | {"PYTHONPATH": str(repository / "src")}
             run(
@@ -208,7 +216,7 @@ def main() -> int:
                     python=python,
                     test_file=test_file,
                     expression=args.expression,
-                    save_name=f"{args.name}-{current_commit[:12]}-run{index}",
+                    save_name=f"current-{args.name}-{current_commit[:12]}-run{index}",
                     storage=storage_uri,
                 ),
                 cwd=repository,
@@ -219,6 +227,9 @@ def main() -> int:
         result_files = baseline_results + current_results
         if not result_files:
             raise RuntimeError("pytest-benchmark did not save any result files")
+        status("Comparing saved results")
+        print("Rows labelled 'baseline-' use the requested baseline ref.")
+        print("Rows labelled 'current-' use the current checkout.")
         run(
             [
                 str(python),
@@ -235,6 +246,7 @@ def main() -> int:
         )
     finally:
         if baseline_created and not args.keep_worktree:
+            status("Removing temporary baseline worktree")
             run(["git", "worktree", "remove", str(baseline_dir)], cwd=repository)
         if temporary_parent is not None and not args.keep_worktree:
             temporary_parent.rmdir()
