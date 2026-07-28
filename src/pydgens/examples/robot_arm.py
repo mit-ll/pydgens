@@ -43,6 +43,7 @@ from __future__ import annotations
 import jax.numpy as jnp
 
 import pydgens as pdg
+from pydgens.ir.strategytypes import FixedStepAffineStrategies
 
 
 def end_effector_position(
@@ -83,9 +84,9 @@ def build_robot_arm_game(
     Returns
     -------
     tuple
-        ``(game, x0, link_lengths, target_position, players)``. The returned
-        ``players`` tuple is useful to visualization code that wants to label
-        the individual joint controls.
+        ``(game, x0, link_lengths, target_position, target_joint_angles,
+        players)``. The target joint angles are used only to create a helpful
+        initial iLQ guess; the game objective itself is solely task-space.
     """
     if n_players != 8:
         raise ValueError(
@@ -99,23 +100,25 @@ def build_robot_arm_game(
     #
     # Equal link lengths make the geometry easy to visualize. The initial arm
     # is gently curved instead of fully straight, avoiding a singular initial
-    # end-effector Jacobian. The target is generated from another reachable,
-    # gently curved pose. In a real application it would usually come from a
-    # task-space planner or user input rather than from a known joint pose.
+    # end-effector Jacobian. The terminal target asks for a substantially more
+    # bent arm configuration, making the endpoint task visibly harder than a
+    # small perturbation of the initial pose. In a real application the target
+    # would usually come from a task-space planner or user input rather than a
+    # known joint configuration.
     link_lengths = jnp.full((n_players,), 0.25)
     x0 = jnp.array([0.10, -0.16, 0.13, -0.11, 0.08, -0.06, 0.04, -0.02])
-    target_pose_for_tutorial = jnp.array(
-        [0.28, -0.30, 0.25, -0.20, 0.16, -0.12, 0.08, -0.04]
+    target_joint_angles = jnp.array(
+        [0.65, -0.75, 0.60, -0.50, 0.40, -0.35, 0.25, -0.15]
     )
     target_position = end_effector_position(
-        target_pose_for_tutorial,
+        target_joint_angles,
         link_lengths=link_lengths,
     )
 
     # A strong terminal weight makes reaching the target more important than
     # minimizing motion. Each player gets the same effort weight here, but
     # this could be made joint-specific to represent different actuators.
-    goal_weight = 1_000.0
+    goal_weight = 2_000.0
     effort_weights = jnp.full((n_players,), 0.05)
 
     # -----------------------------------------------------------------
@@ -185,25 +188,71 @@ def build_robot_arm_game(
     # ``pdg.solve(..., method="ilq")`` lowers it to the iLQ IR and solves the
     # repeated linear-quadratic game approximations.
     game = pdg.game(tg=tg, dynamics=dynamics, players=players)
-    return game, x0, link_lengths, target_position, tuple(players)
+    return (
+        game,
+        x0,
+        link_lengths,
+        target_position,
+        target_joint_angles,
+        tuple(players),
+    )
+
+
+def make_terminal_target_initial_strategy(
+    *,
+    tg,
+    x0: jnp.ndarray,
+    target_joint_angles: jnp.ndarray,
+) -> FixedStepAffineStrategies:
+    """Create a feedforward warm start that reaches a terminal joint pose.
+
+    iLQ is a local method, so a difficult nonlinear terminal target benefits
+    from an initial operating trajectory in the right part of state space. For
+    the velocity-controlled dynamics ``x_dot = u``, a constant joint rate
+    reaches ``target_joint_angles`` exactly over the horizon. This is only an
+    initialization aid: the solved objective still sees only the Cartesian
+    end-effector target, not these joint angles.
+    """
+    horizon_duration = tg.nsteps * tg.dt
+    nominal_joint_rates = (target_joint_angles - x0) / horizon_duration
+    return FixedStepAffineStrategies(
+        tg=tg,
+        P=jnp.zeros((tg.nsteps, x0.shape[0], x0.shape[0])),
+        # Strategies use u = -P @ x - alpha, hence the negative sign.
+        alpha=-jnp.broadcast_to(nominal_joint_rates, (tg.nsteps, x0.shape[0])),
+    )
 
 
 def main() -> None:
     """Solve the eight-player tutorial game and print terminal diagnostics."""
-    game, x0, link_lengths, target_position, players = build_robot_arm_game()
+    (
+        game,
+        x0,
+        link_lengths,
+        target_position,
+        target_joint_angles,
+        players,
+    ) = build_robot_arm_game()
 
     # -----------------------------------------------------------------
     # Step 6: solve with iLQ
     # -----------------------------------------------------------------
-    # The zero default strategy leaves the arm at ``x0`` for the first
-    # operating trajectory. Each iLQ iteration then quadraticizes the common
-    # nonlinear terminal objective about its current terminal configuration.
+    # The target requires substantial bending, so we give the local solver a
+    # physically meaningful feedforward warm start. Each iLQ iteration then
+    # improves this trajectory by quadraticizing the common nonlinear terminal
+    # objective about its current terminal configuration.
+    init_strat = make_terminal_target_initial_strategy(
+        tg=game.tg,
+        x0=x0,
+        target_joint_angles=target_joint_angles,
+    )
     solution = pdg.solve(
         game,
         x0=x0,
         method="ilq",
         max_iters=50,
         converged_max_diff=1e-2,
+        init_strat=init_strat,
     )
 
     # -----------------------------------------------------------------

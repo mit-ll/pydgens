@@ -29,10 +29,10 @@ from matplotlib.animation import FuncAnimation, PillowWriter
 import pydgens as pdg
 from pydgens.examples.robot_arm import (
     build_robot_arm_game,
+    make_terminal_target_initial_strategy,
 )
 
 
-ARM_COLOR = "#2563eb"
 INITIAL_COLOR = "#94a3b8"
 TARGET_COLOR = "#16a34a"
 PATH_COLOR = "#dc2626"
@@ -119,9 +119,24 @@ def make_animation(
         [], [], color=PATH_COLOR, linewidth=1.7, alpha=0.75,
         label="end-effector path", zorder=2,
     )
-    arm_line, = ax_arm.plot(
-        [], [], "o-", color=ARM_COLOR, linewidth=3.0, markersize=5,
-        markerfacecolor="white", markeredgewidth=1.3, label="current arm", zorder=4,
+    # Link i uses Player i's color, matching the rate trace in the right panel.
+    link_lines = []
+    for i in range(link_lengths.shape[0]):
+        link_line, = ax_arm.plot(
+            [], [],
+            color=PLAYER_COLORS[i % len(PLAYER_COLORS)],
+            linewidth=3.5,
+            solid_capstyle="round",
+            zorder=4,
+        )
+        link_lines.append(link_line)
+    joint_markers, = ax_arm.plot(
+        [], [], "o",
+        color="#111827",
+        markersize=4.5,
+        markerfacecolor="white",
+        markeredgewidth=1.0,
+        zorder=5,
     )
     terminal_text = ax_arm.text(
         0.03,
@@ -159,7 +174,9 @@ def make_animation(
 
     def update(frame: int):
         points = points_by_frame[frame]
-        arm_line.set_data(points[:, 0], points[:, 1])
+        for i, link_line in enumerate(link_lines):
+            link_line.set_data(points[i:i + 2, 0], points[i:i + 2, 1])
+        joint_markers.set_data(points[:, 0], points[:, 1])
         path_line.set_data(
             end_effector_path[:frame + 1, 0],
             end_effector_path[:frame + 1, 1],
@@ -171,7 +188,7 @@ def make_animation(
             f"time: {state_times[frame]:.2f} s\n"
             f"target error: {error_norm:.4f} m"
         )
-        return arm_line, path_line, time_cursor, terminal_text
+        return (*link_lines, joint_markers, path_line, time_cursor, terminal_text)
 
     animation = FuncAnimation(
         fig,
@@ -224,13 +241,26 @@ def main() -> None:
     if args.dpi <= 0:
         raise ValueError("`--dpi` must be positive.")
 
-    game, x0, link_lengths, target_position, players = build_robot_arm_game()
+    (
+        game,
+        x0,
+        link_lengths,
+        target_position,
+        target_joint_angles,
+        players,
+    ) = build_robot_arm_game()
+    init_strat = make_terminal_target_initial_strategy(
+        tg=game.tg,
+        x0=x0,
+        target_joint_angles=target_joint_angles,
+    )
     solution = pdg.solve(
         game,
         x0=x0,
         method="ilq",
         max_iters=50,
         converged_max_diff=1e-2,
+        init_strat=init_strat,
     )
     if not solution.converged:
         raise RuntimeError("iLQ did not converge; refusing to render a misleading GIF.")
