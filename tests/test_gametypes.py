@@ -22,6 +22,7 @@ from pydgens.ir.constrainttypes import (
     ConstraintBlockGridMap, 
 )
 from pydgens.ir.strategytypes import FixedStepAffineStrategies
+from pydgens.ir.trajectorytypes import FixedStepSystemTrajectory
 from pydgens.utils.generators import (
     make_random_cost_fn,
     make_random_dynamics
@@ -172,14 +173,59 @@ def test_nlgame1_invalid_costs_not_spec(make_nlgame1_valid_inputs):
     with pytest.raises(TypeError, match="costs must be PlayerCostSpecContinuous"):
         pdg_gt.NonlinearGameType1(cs, N, costs, u_splits)
 
-def test_nlgame1_invalid_costs_terminal(make_nlgame1_valid_inputs):
+def test_nlgame1_accepts_terminal_costs(make_nlgame1_valid_inputs):
     cs, N, T, costs, u_splits = make_nlgame1_valid_inputs
-    costs_bad = [PlayerCostSpecContinuous(
+    costs_with_terminal = [PlayerCostSpecContinuous(
         running = costs[i].running,
         terminal = lambda t, x: 1.0,
     ) for i in range(N)]
-    with pytest.raises(ValueError, match="terminal costs not supported"):
-        pdg_gt.NonlinearGameType1(cs, N, costs_bad, u_splits)
+    game = pdg_gt.NonlinearGameType1(cs, N, costs_with_terminal, u_splits)
+    assert all(cost.terminal is not None for cost in game.costs)
+
+
+def test_approx_lqgame_quadraticizes_terminal_costs_at_terminal_node():
+    """Terminal Taylor terms populate player-aligned LQ ``Qf`` and ``qf``."""
+    tg = TimeGrid(nt=3, dt=0.25, t0=1.5)
+    nx, nu, N = 2, 2, 2
+    cs = SampledContinuousSystemType1(
+        tg=tg,
+        nx=nx,
+        nu=nu,
+        dynamics=lambda t, x, u: jnp.zeros_like(x),
+    )
+    A_terminal = jnp.array([[2.0, -1.0], [-1.0, 4.0]])
+    b_terminal = jnp.array([3.0, -2.0])
+
+    def terminal_player_0(t, x):
+        # The time-coupled term verifies evaluation at the terminal node time.
+        return 0.5 * x @ A_terminal @ x + b_terminal @ x + t * x[0]
+
+    game = pdg_gt.NonlinearGameType1(
+        cs=cs,
+        N=N,
+        costs=[
+            PlayerCostSpecContinuous(
+                running=lambda t, x, u: jnp.sum(u**2),
+                terminal=terminal_player_0,
+            ),
+            PlayerCostSpecContinuous(running=lambda t, x, u: jnp.sum(u**2)),
+        ],
+        u_splits=jnp.array([1, 1], dtype=jnp.int32),
+    )
+    terminal_x = jnp.array([2.0, -3.0])
+    op = FixedStepSystemTrajectory(
+        tg=tg,
+        xs=jnp.array([[0.0, 0.0], [1.0, 1.0], terminal_x]),
+        us=jnp.zeros((tg.nsteps, nu)),
+    )
+
+    lqgame = pdg_gt.approx_linear_quadratic_game(game, op=op)
+
+    expected_qf = A_terminal @ terminal_x + b_terminal + jnp.array([tg.tf, 0.0])
+    assert jnp.allclose(lqgame.Qf[0], A_terminal)
+    assert jnp.allclose(lqgame.qf[0], expected_qf)
+    assert jnp.allclose(lqgame.Qf[1], jnp.zeros((nx, nx)))
+    assert jnp.allclose(lqgame.qf[1], jnp.zeros(nx))
 
 def test_nlgame1_invalid_costs_local_domain(make_nlgame1_valid_inputs):
     cs, N, T, costs, u_splits = make_nlgame1_valid_inputs

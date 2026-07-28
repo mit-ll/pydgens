@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `costtypes.py` quadraticization function of terminal cost
+- `timetypes.py` new `tf` terminal time property for TimeGrid
+
+### Changed
+
+- `gametypes.py` allowing terminal costs in NonlinearGameType1 and adding quadraticization of terminal cost in lqgame approximator function
 
 ## [v1.0.1] - 2026.07.28
 

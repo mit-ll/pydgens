@@ -128,6 +128,11 @@ class TimeGrid:
     def nsteps(self):
         # number of time steps between time nodes
         return self.nt-1
+
+    @property
+    def tf(self):
+        # time value at terminal node
+        return self.t0 + self.nsteps * self.dt
     
 def compute_ts(tg: TimeGrid) -> jnp.ndarray:
     """

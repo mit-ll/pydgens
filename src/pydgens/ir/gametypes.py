@@ -22,6 +22,7 @@ from pydgens.ir.trajectorytypes import (
 from pydgens.ir.costtypes import (
     PlayerCostSpecContinuous,
     quadraticize_cost_joint_ctrl_playerwise_trajectory,
+    quadraticize_terminal_cost_no_checks,
 )
 from pydgens.ir.costtypes import ControlDomain as CostControlDomain
 from pydgens.ir.costtypes import ControlStructure as CostControlStructure
@@ -211,11 +212,11 @@ class NonlinearGameType1:
     - cs (SampledContinuousSystem): control system defining dynamics, sampling time, and state and control dimesnions
     - N (int): Number of players.
     - costs : List[PlayerCostSpecContinuous]
-        list of cost specifications for each player in form function(t, x, u) -> scalar
-        cost specs must use the JOINT control domain. For compatibility with
-        the LQ approximation used by iLQ, running costs must not have
-        ``GENERAL`` control structure. Joint-control costs that are
-        ``LOCAL_ONLY`` or ``BLOCK_SEPARABLE`` are both compatible.
+        List of player cost specifications with a joint-control running cost
+        ``running(t, x, u)`` and an optional terminal cost ``terminal(t, x)``.
+        For compatibility with the LQ approximation used by iLQ, running costs
+        must not have ``GENERAL`` control structure. Joint-control costs that
+        are ``LOCAL_ONLY`` or ``BLOCK_SEPARABLE`` are both compatible.
     - u_splits: jnp.ndarray of length N. 
         Lengths of each u_j block defining each player's portion of the joint control vector
 
@@ -248,8 +249,6 @@ class NonlinearGameType1:
         for i in range(self.N):
             if not isinstance(self.costs[i], PlayerCostSpecContinuous):
                 raise TypeError(f"costs must be PlayerCostSpecContinuous. Got type {type(self.costs[i])} for player {i}")
-            if self.costs[i].terminal is not None:
-                raise ValueError(f"terminal costs not supported. Got terminal cost for player {i}")
             if self.costs[i].control_domain is not CostControlDomain.JOINT:
                 raise ValueError(f"cost functions take joint control vectors. Got non-joint control domain for player {i}")
             if self.costs[i].control_structure is CostControlStructure.GENERAL:
@@ -471,8 +470,8 @@ def _approx_linear_quadratic_game(nlgame: NonlinearGameType1, op: FixedStepSyste
     q = jnp.zeros((nlgame.nsteps, nlgame.N, nlgame.nx))
     R = jnp.zeros((nlgame.nsteps, nlgame.N, nlgame.nu, nlgame.nu))
     r = jnp.zeros((nlgame.nsteps, nlgame.N, nlgame.nu))
-    Qf = jnp.zeros((nlgame.N, nlgame.nx, nlgame.nx), dtype=Q.dtype),
-    qf = jnp.zeros((nlgame.N, nlgame.nx), dtype=q.dtype),
+    Qf = jnp.zeros((nlgame.N, nlgame.nx, nlgame.nx), dtype=Q.dtype)
+    qf = jnp.zeros((nlgame.N, nlgame.nx), dtype=q.dtype)
     for pidx in range(nlgame.N):
         Qp, qp, Rp, rp = quadraticize_cost_joint_ctrl_playerwise_trajectory(
             g_i = nlgame.costs[pidx].running, 
@@ -485,7 +484,14 @@ def _approx_linear_quadratic_game(nlgame: NonlinearGameType1, op: FixedStepSyste
         r = r.at[:, pidx, :].set(rp)
 
         # Quadraticize terminal cost
-        # TODO
+        if nlgame.costs[pidx].terminal is not None:
+            Qfp, qfp = quadraticize_terminal_cost_no_checks(
+                gterm_i = nlgame.costs[pidx].terminal,
+                t = op.tg.tf,
+                x = op.xs[-1],
+            )
+            Qf = Qf.at[pidx].set(Qfp)
+            qf = qf.at[pidx].set(qfp)
 
 
     # Construct LQGame around current operating point

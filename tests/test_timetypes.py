@@ -34,6 +34,17 @@ def test_zero_step():
     t = irtime.TimeGrid(nt=1, dt=0.1)
     assert t.nsteps == 0
 
+
+@pytest.mark.parametrize(
+    ("nt", "dt", "t0"),
+    [(1, 0.1, 2.5), (2, 0.5, -1.0), (5, 0.25, 1.5)],
+)
+def test_tf_is_the_last_time_grid_node(nt, dt, t0):
+    tg = irtime.TimeGrid(nt=nt, dt=dt, t0=t0)
+
+    assert tg.tf == pytest.approx(t0 + (nt - 1) * dt)
+    assert tg.tf == pytest.approx(float(irtime.compute_ts(tg)[-1]))
+
 def test_invalid_nt_type():
     with pytest.raises(TypeError):
         irtime.TimeGrid(nt=5.0, dt=0.1)
