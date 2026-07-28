@@ -37,7 +37,9 @@ from changes to the benchmark itself.
 
 The comparison script automates this procedure, including temporary-worktree
 management, result naming, and the final report. Supply a baseline ref and a pytest
-`-k` expression selecting the stable benchmark subset:
+`-k` expression selecting the stable benchmark subset. The script uses the Python
+interpreter that starts it; it does not create, locate, or modify an environment.
+Start it with an environment that already has the test dependencies installed.
 
 ```bash
 uv run --extra test python scripts/benchmark/compare_revision.py \
@@ -48,7 +50,8 @@ uv run --extra test python scripts/benchmark/compare_revision.py \
 Use `--repeat N` to collect repeated paired samples, `--storage PATH` to retain data
 outside the default `.benchmarks` directory, and `--allow-dirty` only when the current
 uncommitted source is intentionally being benchmarked. Run the script with `--help`
-for all options.
+for all options. Do not execute the script directly unless its shebang resolves to the
+intended Python environment.
 
 Run comparisons on the same, otherwise-idle machine. Avoid comparing results from
 different operating systems, CPU models, Python versions, or dependency environments;
@@ -66,15 +69,15 @@ BASELINE_DIR="${TMPDIR:-/tmp}/pydgens-v100"
 git worktree add "$BASELINE_DIR" "$BASELINE_REF"
 ```
 
-Use one Python environment for both runs. With `uv`, the test extra supplies
-`pytest` and `pytest-benchmark`:
+Use one Python environment for both runs. It must provide `pytest` and
+`pytest-benchmark`; for example, create or refresh a uv-managed environment and run
+the following commands through it:
 
 ```bash
 cd "$REPO_ROOT"
 uv sync --extra test
 
-PYTHON="$REPO_ROOT/.venv/bin/python"
-PYTEST_BENCHMARK="$REPO_ROOT/.venv/bin/pytest-benchmark"
+PYTHON="$(uv run --extra test python -c 'import sys; print(sys.executable)')"
 ```
 
 Choose the stable benchmark subset to compare and a persistent local result store.
@@ -117,7 +120,7 @@ PYTHONPATH="$BASELINE_DIR/src" \
 Compare the saved samples by benchmark name:
 
 ```bash
-"$PYTEST_BENCHMARK" \
+"$PYTHON" -m pytest_benchmark \
   --storage="$BENCH_STORE" \
   compare \
   --group-by=name \

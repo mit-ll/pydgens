@@ -9,7 +9,6 @@ from __future__ import annotations
 import argparse
 import os
 import shlex
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -79,55 +78,15 @@ def benchmark_command(
     ]
 
 
-def default_python(repository: Path) -> Path:
-    """Prefer the project virtual environment, including uv-configured locations."""
-    if os.name == "nt":
-        candidate = repository / ".venv" / "Scripts" / "python.exe"
-    else:
-        candidate = repository / ".venv" / "bin" / "python"
-    if candidate.is_file():
-        return candidate
-
-    uv = shutil.which("uv")
-    if uv is not None:
-        try:
-            resolved = subprocess.check_output(
-                [
-                    uv,
-                    "run",
-                    "--extra",
-                    "test",
-                    "python",
-                    "-c",
-                    "import sys; print(sys.executable)",
-                ],
-                cwd=repository,
-                text=True,
-            ).strip()
-        except subprocess.CalledProcessError:
-            pass
-        else:
-            candidate = Path(resolved)
-            if candidate.is_file():
-                return candidate
-
-    return Path(sys.executable)
-
-
-def require_pytest_benchmark(python: Path) -> None:
-    """Ensure the selected interpreter has the benchmark management module."""
-    result = subprocess.run(
-        [str(python), "-c", "import pytest_benchmark"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
-    if result.returncode:
+def require_pytest_benchmark() -> None:
+    """Ensure the interpreter that launched this script has benchmark support."""
+    try:
+        import pytest_benchmark  # noqa: F401
+    except ModuleNotFoundError as error:
         raise RuntimeError(
-            f"pytest-benchmark is not installed for {python}. "
-            "Run `uv sync --extra test` from the repository root, or pass "
-            "--python PATH` for an interpreter that has pytest-benchmark installed."
-        )
+            f"pytest-benchmark is not installed for {sys.executable}. "
+            "Run this script with a Python environment that has the test dependencies."
+        ) from error
 
 
 def parse_args() -> argparse.Namespace:
@@ -152,13 +111,6 @@ def parse_args() -> argparse.Namespace:
         "--storage",
         default=".benchmarks",
         help="Local path or file:// URI for saved results (default: %(default)s).",
-    )
-    parser.add_argument(
-        "--python",
-        help=(
-            "Python interpreter used for both runs (default: the project uv "
-            "environment, if available)."
-        ),
     )
     parser.add_argument(
         "--name",
@@ -201,14 +153,8 @@ def main() -> int:
     if not test_file.is_file():
         raise RuntimeError(f"Benchmark test file does not exist: {test_file}")
 
-    python = (
-        Path(args.python).expanduser().resolve()
-        if args.python
-        else default_python(repository).resolve()
-    )
-    if not python.is_file():
-        raise RuntimeError(f"Python interpreter does not exist: {python}")
-    require_pytest_benchmark(python)
+    python = Path(sys.executable).resolve()
+    require_pytest_benchmark()
 
     baseline_commit = git_output(repository, "rev-parse", "--verify", f"{args.baseline}^{{commit}}")
     current_commit = git_output(repository, "rev-parse", "HEAD")
