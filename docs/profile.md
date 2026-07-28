@@ -2,111 +2,126 @@
 icon: material/chart-bar
 ---
 
-# Profile
+# Profiling
 
-=== "Scalene"
+Profiling explains where a single run spends time or allocates memory. It is
+different from [benchmarking](testing.md#benchmarks): use profiling to find a
+candidate optimization and benchmarking to measure whether that optimization
+improved performance relative to a baseline.
 
-    <figure markdown="span">
-        ![Image title](https://raw.githubusercontent.com/plasma-umass/scalene/master/docs/scalene-icon-white.png){ width="300" }
-        <figcaption></figcaption>
-    </figure>
+PYDGENS provides optional profiling dependencies. Install them into the same
+Python environment used to run the example or tests:
 
-    To profile all pytests:
+```bash
+python -m pip install -e ".[profile]"
+```
 
-    ```bash
-    scalene --profile-all src/pydgens/examples/unicycle.py
-    ```
+Profile representative, focused workloads rather than the entire test suite.
+The commands below use the unicycle example; replace it with the example or
+test that exercises the code path of interest. Profilers add overhead, so do
+not use their elapsed times as benchmark results.
 
-    
+## Scalene: CPU and Memory Hotspots
 
-=== "Line Profiler"
+[Scalene](https://github.com/plasma-umass/scalene) is useful for a broad
+line-level view of CPU and memory activity. The command below profiles the
+unicycle example and saves its data outside the source tree:
 
-    A line by line profiling tool.  Official docs found [here](https://kernprof.readthedocs.io/en/latest/index.html#line-profiler-basic-usage).
-    
-    ```bash
-    Pystone(1.1) time for 50000 passes = 2.48
-    This machine benchmarks at 20161.3 pystones/second
-    Wrote profile results to pystone.py.lprof
-    Timer unit: 1e-06 s
+```bash
+mkdir -p .profiles
+scalene run --profile-all \
+  --outfile .profiles/unicycle-scalene.json \
+  src/pydgens/examples/unicycle.py
+```
 
-    File: pystone.py
-    Function: Proc2 at line 149
-    Total time: 0.606656 s
+Open the interactive report or render a terminal summary:
 
-    Line #      Hits         Time  Per Hit   % Time  Line Contents
-    ==============================================================
-    149                                           @profile
-    150                                           def Proc2(IntParIO):
-    151     50000        82003      1.6     13.5      IntLoc = IntParIO + 10
-    152     50000        63162      1.3     10.4      while 1:
-    153     50000        69065      1.4     11.4          if Char1Glob == 'A':
-    154     50000        66354      1.3     10.9              IntLoc = IntLoc - 1
-    155     50000        67263      1.3     11.1              IntParIO = IntLoc - IntGlob
-    156     50000        65494      1.3     10.8              EnumLoc = Ident1
-    157     50000        68001      1.4     11.2          if EnumLoc == Ident1:
-    158     50000        63739      1.3     10.5              break
-    159     50000        61575      1.2     10.1      return IntParIO
-    ```
+```bash
+scalene view .profiles/unicycle-scalene.json
+scalene view --cli .profiles/unicycle-scalene.json
+```
 
-    
+`--profile-all` includes code beyond the target script. For a faster CPU-only
+pass, replace it with `--cpu-only`. To profile a focused pytest workload,
+Scalene can run pytest as a module:
 
-    Line Profiler requires the `@profile` decorator.
-    
-    Example:
+```bash
+scalene run -m pytest tests/test_alsolver.py -k 'test_name'
+```
 
-    ```python
-    from line_profiler import profile
+## Line Profiler: One Function at a Time
 
-    @profile
-    def myfunction(...)
-        # code here
+[Line Profiler](https://kernprof.readthedocs.io/en/latest/index.html) measures
+execution time line by line for functions you explicitly mark. It has higher
+overhead than a sampling profiler, so use it after another tool has identified
+a small area to investigate.
 
-    ```
+Temporarily decorate the function of interest. Importing the decorator keeps
+the module runnable when it is not being profiled:
 
-    Then run with `LINE_PROFILE=1`.
+```python
+from line_profiler import profile
 
-    Example:
 
-    ```bash
-    LINE_PROFILE=1 python src/pydgens/examples/unicycle.py
-    ```
+@profile
+def function_to_investigate(...):
+    ...
+```
 
-    ```bash
-    python -m line_profiler -rtmz profile_output.lprof
-    ```
+Run the module through `kernprof` with line-by-line profiling enabled. The
+`-v` flag prints the report and `-o` saves it for later inspection:
 
-=== "PyInstrument"
+```bash
+mkdir -p .profiles
+PYTHONPATH=src kernprof -l -v \
+  -o .profiles/unicycle.lprof \
+  -m pydgens.examples.unicycle
+```
 
-    <figure markdown="span">
-        ![Image title](https://raw.githubusercontent.com/joerick/pyinstrument/main/docs/img/screenshot.jpg){ width="800" }
-        <figcaption></figcaption>
-    </figure>
+View a saved report again with:
 
-    Modify your script with the PyInstrument profiler.
+```bash
+python -m line_profiler .profiles/unicycle.lprof
+```
 
-    Example:
+Remove temporary decorators before committing unless they are intentionally
+part of the maintained profiling setup.
 
-    ```python
-    from pyinstrument import Profiler
+## PyInstrument: Call-Tree Overview
 
-    profiler = Profiler()
-    profiler.start()
+[PyInstrument](https://pyinstrument.readthedocs.io/en/stable/guide.html) is a
+sampling profiler that produces a call-tree overview with relatively low
+overhead. It can profile a script or module directly, without modifying the
+source code:
 
-    # code you want to profile
+```bash
+pyinstrument -m pydgens.examples.unicycle
+```
 
-    profiler.stop()
-    profiler.print()
-    profiler.open_in_browser()  # show browser
-    profiler.output_html()      # save for use later
-    ```
+Save an interactive HTML report for sharing or later inspection:
 
-    Pytest example:
+```bash
+mkdir -p .profiles
+pyinstrument \
+  --renderer html \
+  --outfile .profiles/unicycle-pyinstrument.html \
+  -m pydgens.examples.unicycle
+```
 
-    ```bash
-    pytest [pytest-args...]
-    ```
+To profile selected tests, run pytest through PyInstrument:
 
-    Example:
-    ```bash
-    python src/pydgens/examples/unicycle.py
-    ```
+```bash
+pyinstrument -m pytest tests/test_alsolver.py -k 'test_name'
+```
+
+For a very short workload, PyInstrument may collect too few samples. In that
+case, profile a representative loop or use a smaller sampling interval, while
+recognizing that smaller intervals add overhead.
+
+## Interpreting Results
+
+Treat profiler output as evidence for where to investigate, not as a direct
+performance claim. JAX compilation and asynchronous execution can make a
+first-run profile look very different from a steady-state solve. After making
+an optimization, use the [benchmark comparison procedure](testing.md#benchmarks)
+to compare the same workload against a baseline under controlled conditions.

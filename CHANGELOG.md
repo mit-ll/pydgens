@@ -30,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `alsolver.py` Introduced `newton_solve_stationarity` and `al_solve` as preferred neutral solver entry points while retaining the `_autodiff` names as backward-compatible wrappers.
 - `test_alsolver.py` Added Newton-step dispatch and benchmark coverage comparing autodiff and structured Jacobian backends end-to-end.
 - `constrainttypes.py` Extended constraint linearizations to retain the originating constraint callable for structured Jacobian Hessian assembly.
-- `docs/` updating example links to use absolute URLs
+- `docs/` updating example links to use absolute URLs, updating benchmarking and profiling descriptions
 
 ## [v1.0.0] - 2026.06.23
 

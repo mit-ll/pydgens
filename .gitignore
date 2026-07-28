@@ -20,8 +20,11 @@ venv/
 site/
 
 # profile
+.profiles/
 profile.html
 profile.json
+scalene-profile.html
+scalene-profile.json
 
 # Distribution / packaging
 .Python
