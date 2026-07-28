@@ -279,19 +279,19 @@ def main() -> None:
         link_lengths,
         target_midpoint,
         target_position,
-        target_joint_angles,
+        warm_start_joint_angles,
         players,
     ) = build_robot_arm_game()
     init_strat = make_terminal_target_initial_strategy(
         tg=game.tg,
         x0=x0,
-        target_joint_angles=target_joint_angles,
+        warm_start_joint_angles=warm_start_joint_angles,
     )
     solution = pdg.solve(
         game,
         x0=x0,
         method="ilq",
-        max_iters=100,
+        max_iters=50,
         converged_max_diff=5e-2,
         init_strat=init_strat,
     )

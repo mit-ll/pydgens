@@ -101,9 +101,9 @@ def build_robot_arm_game(
     -------
     tuple
         ``(game, x0, link_lengths, target_midpoint, target_position,
-        target_joint_angles, players)``. The target joint angles are used only
-        to create a helpful initial iLQ guess; the game objective itself is
-        solely task-space.
+        warm_start_joint_angles, players)``. The warm-start angles are used
+        only to create a helpful initial iLQ guess; the game objective itself
+        is solely task-space.
     """
     if n_players != 8:
         raise ValueError(
@@ -129,22 +129,25 @@ def build_robot_arm_game(
     # a desired joint configuration: a caller could substitute points supplied
     # by a planner, perception system, or interactive user interface here.
     # Together they form a forward capital gamma (``┌``) in task space.
-    target_midpoint = jnp.array([0.0, 0.85])
-    target_position = jnp.array([0.85, 0.85])
+    target_midpoint = jnp.array([-0.2, 0.3])
+    target_position = jnp.array([0.2, 0.6])
     midpoint_index = n_players // 2 - 1
 
-    # iLQ is local, so the difficult terminal shape benefits from a warm start
-    # in the correct kinematic basin. These angles are *not* part of the cost.
-    # Their first four absolute link orientations rise around +y, and their
-    # final four wrap around to point approximately +x from the midpoint.
-    target_joint_angles = jnp.array(
-        [0.84, 0.43, 0.60, 0.43, 3.25, 0.43, 0.60, 0.43]
+    # iLQ is local, so the tightly folded terminal shape benefits from a warm
+    # start in the correct kinematic basin. Construct one deterministically:
+    # the first four links reach the midpoint target, then the final four reach
+    # the displacement from midpoint to end-effector target. These angles are
+    # *not* part of the objective; they are only an initial guess.
+    warm_start_joint_angles = make_shape_target_warm_start(
+        target_midpoint=target_midpoint,
+        target_end_effector=target_position,
+        link_lengths=link_lengths,
     )
 
     # A strong terminal weight makes reaching the target more important than
     # minimizing motion. Each player gets the same effort weight here, but
     # this could be made joint-specific to represent different actuators.
-    midpoint_goal_weight = 10_000.0
+    midpoint_goal_weight = 50_000.0
     end_effector_goal_weight = 10_000.0
     effort_weights = jnp.full((n_players,), 0.05)
 
@@ -231,28 +234,88 @@ def build_robot_arm_game(
         link_lengths,
         target_midpoint,
         target_position,
-        target_joint_angles,
+        warm_start_joint_angles,
         tuple(players),
     )
+
+
+def _four_link_absolute_orientations(
+    displacement: jnp.ndarray,
+    *,
+    link_length: float,
+    reverse_order: bool,
+) -> jnp.ndarray:
+    """Construct one folded four-link pose that realizes ``displacement``.
+
+    The four absolute link orientations are symmetric about the displacement
+    direction. Their vector sum equals ``displacement``. Reversing their order
+    preserves that endpoint while choosing the opposite visual bend direction.
+    """
+    distance = jnp.linalg.norm(displacement)
+    mean_orientation = jnp.arctan2(displacement[1], displacement[0])
+    inner_bend = 1.0
+    outer_cosine = distance / (2.0 * link_length) - jnp.cos(inner_bend)
+    outer_bend = jnp.arccos(jnp.clip(outer_cosine, -1.0, 1.0))
+
+    if reverse_order:
+        offsets = jnp.array([outer_bend, inner_bend, -inner_bend, -outer_bend])
+    else:
+        offsets = jnp.array([-outer_bend, -inner_bend, inner_bend, outer_bend])
+    return mean_orientation + offsets
+
+
+def make_shape_target_warm_start(
+    *,
+    target_midpoint: jnp.ndarray,
+    target_end_effector: jnp.ndarray,
+    link_lengths: jnp.ndarray,
+) -> jnp.ndarray:
+    """Return a gamma-shaped joint pose satisfying both terminal targets.
+
+    This is a small deterministic inverse-kinematics construction for the
+    tutorial's eight equal-length links. It first solves the four-link base to
+    midpoint chain, then solves the four-link midpoint to end-effector chain.
+    Reversing the latter orientation sequence makes the distal arm bend through
+    negative angles instead of taking a visually unhelpful full rotation.
+    """
+    if link_lengths.shape != (8,) or not bool(jnp.allclose(link_lengths, link_lengths[0])):
+        raise ValueError("The tutorial warm-start construction requires eight equal-length links.")
+
+    link_length = link_lengths[0]
+    midpoint_orientations = _four_link_absolute_orientations(
+        target_midpoint,
+        link_length=link_length,
+        reverse_order=False,
+    )
+    distal_orientations = _four_link_absolute_orientations(
+        target_end_effector - target_midpoint,
+        link_length=link_length,
+        reverse_order=True,
+    )
+    absolute_orientations = jnp.concatenate((midpoint_orientations, distal_orientations))
+    return jnp.concatenate((
+        absolute_orientations[:1],
+        jnp.diff(absolute_orientations),
+    ))
 
 
 def make_terminal_target_initial_strategy(
     *,
     tg,
     x0: jnp.ndarray,
-    target_joint_angles: jnp.ndarray,
+    warm_start_joint_angles: jnp.ndarray,
 ) -> FixedStepAffineStrategies:
     """Create a feedforward warm start that reaches a terminal joint pose.
 
     iLQ is a local method, so a difficult nonlinear terminal target benefits
     from an initial operating trajectory in the right part of state space. For
     the velocity-controlled dynamics ``x_dot = u``, a constant joint rate
-    reaches ``target_joint_angles`` exactly over the horizon. This is only an
+    reaches ``warm_start_joint_angles`` exactly over the horizon. This is only an
     initialization aid: the solved objective still sees only the Cartesian
     end-effector target, not these joint angles.
     """
     horizon_duration = tg.nsteps * tg.dt
-    nominal_joint_rates = (target_joint_angles - x0) / horizon_duration
+    nominal_joint_rates = (warm_start_joint_angles - x0) / horizon_duration
     return FixedStepAffineStrategies(
         tg=tg,
         P=jnp.zeros((tg.nsteps, x0.shape[0], x0.shape[0])),
@@ -269,7 +332,7 @@ def main() -> None:
         link_lengths,
         target_midpoint,
         target_position,
-        target_joint_angles,
+        warm_start_joint_angles,
         players,
     ) = build_robot_arm_game()
 
@@ -283,13 +346,13 @@ def main() -> None:
     init_strat = make_terminal_target_initial_strategy(
         tg=game.tg,
         x0=x0,
-        target_joint_angles=target_joint_angles,
+        warm_start_joint_angles=warm_start_joint_angles,
     )
     solution = pdg.solve(
         game,
         x0=x0,
         method="ilq",
-        max_iters=100,
+        max_iters=50,
         converged_max_diff=5e-2,
         init_strat=init_strat,
     )
