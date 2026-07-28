@@ -9,7 +9,6 @@ from __future__ import annotations
 import argparse
 import os
 import shlex
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -77,23 +76,6 @@ def benchmark_command(
         f"--benchmark-save={save_name}",
         f"--benchmark-storage={storage}",
     ]
-
-
-def pytest_benchmark_command(python: Path) -> Path:
-    """Find the pytest-benchmark executable installed with ``python``."""
-    scripts_dir = Path(
-        subprocess.check_output(
-            [str(python), "-c", "import sysconfig; print(sysconfig.get_path('scripts'))"],
-            text=True,
-        ).strip()
-    )
-    executable = shutil.which("pytest-benchmark", path=str(scripts_dir))
-    if executable is None:
-        raise RuntimeError(
-            "pytest-benchmark is not installed for --python. "
-            "Run `uv sync --extra test` first."
-        )
-    return Path(executable)
 
 
 def parse_args() -> argparse.Namespace:
@@ -168,7 +150,10 @@ def main() -> int:
     python = Path(args.python).expanduser().resolve()
     if not python.is_file():
         raise RuntimeError(f"Python interpreter does not exist: {python}")
-    benchmark_cli = pytest_benchmark_command(python)
+    run(
+        [str(python), "-c", "import pytest_benchmark"],
+        cwd=repository,
+    )
 
     baseline_commit = git_output(repository, "rev-parse", "--verify", f"{args.baseline}^{{commit}}")
     current_commit = git_output(repository, "rev-parse", "HEAD")
@@ -235,7 +220,9 @@ def main() -> int:
             raise RuntimeError("pytest-benchmark did not save any result files")
         run(
             [
-                str(benchmark_cli),
+                str(python),
+                "-m",
+                "pytest_benchmark",
                 "--storage",
                 storage_uri,
                 "compare",
