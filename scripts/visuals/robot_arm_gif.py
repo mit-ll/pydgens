@@ -258,8 +258,8 @@ def main() -> None:
         game,
         x0=x0,
         method="ilq",
-        max_iters=50,
-        converged_max_diff=1e-2,
+        max_iters=100,
+        converged_max_diff=5e-2,
         init_strat=init_strat,
     )
     if not solution.converged:

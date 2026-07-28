@@ -100,16 +100,17 @@ def build_robot_arm_game(
     #
     # Equal link lengths make the geometry easy to visualize. The initial arm
     # is gently curved instead of fully straight, avoiding a singular initial
-    # end-effector Jacobian. The terminal target asks for a substantially more
-    # bent arm configuration, making the endpoint task visibly harder than a
-    # small perturbation of the initial pose. In a real application the target
-    # would usually come from a task-space planner or user input rather than a
-    # known joint configuration.
+    # end-effector Jacobian. The terminal target is a tightly folded arm whose
+    # end effector lies at the workspace origin. Reaching it requires a large,
+    # coordinated reconfiguration of all eight joints rather than a small
+    # perturbation of the initial pose. In a real application the target would
+    # usually come from a task-space planner or user input rather than a known
+    # joint configuration.
     link_lengths = jnp.full((n_players,), 0.25)
     x0 = jnp.array([0.10, -0.16, 0.13, -0.11, 0.08, -0.06, 0.04, -0.02])
-    target_joint_angles = jnp.array(
-        [0.65, -0.75, 0.60, -0.50, 0.40, -0.35, 0.25, -0.15]
-    )
+    # Eight successive right-angle turns form two closed squares, so this
+    # pose places the end effector at the arm base (the origin).
+    target_joint_angles = jnp.full((n_players,), 0.5 * jnp.pi)
     target_position = end_effector_position(
         target_joint_angles,
         link_lengths=link_lengths,
@@ -118,7 +119,7 @@ def build_robot_arm_game(
     # A strong terminal weight makes reaching the target more important than
     # minimizing motion. Each player gets the same effort weight here, but
     # this could be made joint-specific to represent different actuators.
-    goal_weight = 2_000.0
+    goal_weight = 10_000.0
     effort_weights = jnp.full((n_players,), 0.05)
 
     # -----------------------------------------------------------------
@@ -250,8 +251,8 @@ def main() -> None:
         game,
         x0=x0,
         method="ilq",
-        max_iters=50,
-        converged_max_diff=1e-2,
+        max_iters=100,
+        converged_max_diff=5e-2,
         init_strat=init_strat,
     )
 
