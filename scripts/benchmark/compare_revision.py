@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -79,12 +80,38 @@ def benchmark_command(
 
 
 def default_python(repository: Path) -> Path:
-    """Prefer the project virtual-environment interpreter when it exists."""
+    """Prefer the project virtual environment, including uv-configured locations."""
     if os.name == "nt":
         candidate = repository / ".venv" / "Scripts" / "python.exe"
     else:
         candidate = repository / ".venv" / "bin" / "python"
-    return candidate if candidate.is_file() else Path(sys.executable)
+    if candidate.is_file():
+        return candidate
+
+    uv = shutil.which("uv")
+    if uv is not None:
+        try:
+            resolved = subprocess.check_output(
+                [
+                    uv,
+                    "run",
+                    "--extra",
+                    "test",
+                    "python",
+                    "-c",
+                    "import sys; print(sys.executable)",
+                ],
+                cwd=repository,
+                text=True,
+            ).strip()
+        except subprocess.CalledProcessError:
+            pass
+        else:
+            candidate = Path(resolved)
+            if candidate.is_file():
+                return candidate
+
+    return Path(sys.executable)
 
 
 def require_pytest_benchmark(python: Path) -> None:
@@ -129,8 +156,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--python",
         help=(
-            "Python interpreter used for both runs (default: the project .venv "
-            "interpreter, if present)."
+            "Python interpreter used for both runs (default: the project uv "
+            "environment, if available)."
         ),
     )
     parser.add_argument(
