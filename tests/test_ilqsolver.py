@@ -749,6 +749,42 @@ def test_solve_ilqgame_feedback_zero_step_game():
     assert strat.alpha.shape == (0, nu)
     assert jnp.allclose(traj.xs[0], x0)
 
+
+def test_solve_ilqgame_feedback_terminal_target_moves_one_stage_state():
+    """A terminal target cost drives a nonzero control through the full iLQ path."""
+    tg = TimeGrid(nt=2, dt=1.0)
+    target = 5.0
+    cs = SampledContinuousSystemType1(
+        tg=tg,
+        nx=1,
+        nu=1,
+        dynamics=lambda t, x, u: u,
+    )
+    nlgame = NonlinearGameType1(
+        cs=cs,
+        N=1,
+        costs=[PlayerCostSpecContinuous(
+            running=lambda t, x, u: 0.5 * u[0] ** 2,
+            terminal=lambda t, x: 2.0 * (x[0] - target) ** 2,
+        )],
+        u_splits=jnp.array([1], dtype=jnp.int32),
+    )
+
+    converged, trajectory, strategy = solve_ilqgame_feedback(
+        nlgame=nlgame,
+        x0=jnp.array([0.0]),
+        max_iters=20,
+        converged_max_diff=1e-4,
+        backtrack_max_iters=10,
+        backtrack_scale_init=1.0,
+        backtrack_scale_max_diff=10.0,
+    )
+
+    assert converged
+    assert jnp.abs(strategy.alpha[0, 0]) > 1e-5
+    assert trajectory.us[0, 0] > 0.0
+    assert 0.0 < trajectory.xs[-1, 0] < target
+
 # def test_solve_ilqgame_feedback_lq(arbitrary_time_varying_lqgame):
 #     # Run the iterative linear-quadratic solver on a game that is actually linear-quadratic
 #     # to check that the iterative-LQ algorithm returns the same nash trajectory as the lq-solver

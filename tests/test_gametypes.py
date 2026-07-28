@@ -23,6 +23,7 @@ from pydgens.ir.constrainttypes import (
 )
 from pydgens.ir.strategytypes import FixedStepAffineStrategies
 from pydgens.ir.trajectorytypes import FixedStepSystemTrajectory
+from pydgens.solvers.lqsolver import solve_lqgame_feedback
 from pydgens.utils.generators import (
     make_random_cost_fn,
     make_random_dynamics
@@ -226,6 +227,102 @@ def test_approx_lqgame_quadraticizes_terminal_costs_at_terminal_node():
     assert jnp.allclose(lqgame.qf[0], expected_qf)
     assert jnp.allclose(lqgame.Qf[1], jnp.zeros((nx, nx)))
     assert jnp.allclose(lqgame.qf[1], jnp.zeros(nx))
+
+
+def test_approx_lqgame_quadraticizes_nonlinear_terminal_cost():
+    """The approximation evaluates terminal derivatives at the final OP state."""
+    tg = TimeGrid(nt=2, dt=0.5)
+    cs = SampledContinuousSystemType1(
+        tg=tg,
+        nx=2,
+        nu=1,
+        dynamics=lambda t, x, u: jnp.zeros_like(x),
+    )
+
+    def terminal(t, x):
+        return jnp.sin(x[0] * x[1]) + t * x[1] ** 2
+
+    game = pdg_gt.NonlinearGameType1(
+        cs=cs,
+        N=1,
+        costs=[PlayerCostSpecContinuous(running=lambda t, x, u: u[0] ** 2, terminal=terminal)],
+        u_splits=jnp.array([1], dtype=jnp.int32),
+    )
+    terminal_x = jnp.array([0.4, -0.7])
+    op = FixedStepSystemTrajectory(
+        tg=tg,
+        xs=jnp.stack([jnp.zeros(2), terminal_x]),
+        us=jnp.zeros((1, 1)),
+    )
+
+    lqgame = pdg_gt.approx_linear_quadratic_game(game, op=op)
+    expected_Qf = jax.hessian(lambda x: terminal(tg.tf, x))(terminal_x)
+    expected_qf = jax.grad(lambda x: terminal(tg.tf, x))(terminal_x)
+
+    assert jnp.allclose(lqgame.Qf[0], expected_Qf)
+    assert jnp.allclose(lqgame.qf[0], expected_qf)
+
+
+def test_approx_lqgame_without_terminal_costs_uses_zero_terminal_terms():
+    """Omitted terminal costs retain the historical zero-boundary behavior."""
+    tg = TimeGrid(nt=2, dt=0.1)
+    cs = SampledContinuousSystemType1(
+        tg=tg,
+        nx=1,
+        nu=1,
+        dynamics=lambda t, x, u: u,
+    )
+    game = pdg_gt.NonlinearGameType1(
+        cs=cs,
+        N=1,
+        costs=[PlayerCostSpecContinuous(running=lambda t, x, u: x[0] ** 2 + u[0] ** 2)],
+        u_splits=jnp.array([1], dtype=jnp.int32),
+    )
+    op = FixedStepSystemTrajectory(
+        tg=tg,
+        xs=jnp.array([[1.0], [1.0]]),
+        us=jnp.zeros((1, 1)),
+    )
+
+    lqgame = pdg_gt.approx_linear_quadratic_game(game, op=op)
+
+    assert jnp.allclose(lqgame.Qf, jnp.zeros((1, 1, 1)))
+    assert jnp.allclose(lqgame.qf, jnp.zeros((1, 1)))
+
+
+def test_approx_lqgame_zero_step_preserves_terminal_quadraticization():
+    """A terminal cost remains defined when the grid has no control stages."""
+    tg = TimeGrid(nt=1, dt=0.1, t0=2.0)
+    cs = SampledContinuousSystemType1(
+        tg=tg,
+        nx=1,
+        nu=1,
+        dynamics=lambda t, x, u: jnp.zeros_like(x),
+    )
+    game = pdg_gt.NonlinearGameType1(
+        cs=cs,
+        N=1,
+        costs=[PlayerCostSpecContinuous(
+            running=lambda t, x, u: u[0] ** 2,
+            terminal=lambda t, x: 3.0 * x[0] ** 2 + t * x[0],
+        )],
+        u_splits=jnp.array([1], dtype=jnp.int32),
+    )
+    op = FixedStepSystemTrajectory(
+        tg=tg,
+        xs=jnp.array([[4.0]]),
+        us=jnp.zeros((0, 1)),
+    )
+
+    lqgame = pdg_gt.approx_linear_quadratic_game(game, op=op)
+
+    assert lqgame.nsteps == 0
+    assert jnp.allclose(lqgame.Qf, jnp.array([[[6.0]]]))
+    assert jnp.allclose(lqgame.qf, jnp.array([[24.0 + tg.tf]]))
+
+    strategy = solve_lqgame_feedback(lqgame)
+    assert strategy.P.shape == (0, 1, 1)
+    assert strategy.alpha.shape == (0, 1)
 
 def test_nlgame1_invalid_costs_local_domain(make_nlgame1_valid_inputs):
     cs, N, T, costs, u_splits = make_nlgame1_valid_inputs

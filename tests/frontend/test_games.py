@@ -1242,6 +1242,43 @@ def test_constrained_nonlineargame_to_ir_preserves_explicit_terminal_costs():
     assert jnp.isclose(ir_game.costs[1].terminal(t, x), terminal_2(t, x))
 
 
+def test_nonlineargame_to_ir_preserves_explicit_terminal_costs():
+    """The unconstrained frontend lowers terminal costs to the iLQ IR."""
+    terminal_1 = lambda t, x: x[0] ** 2 + t
+    terminal_2 = lambda t, x: -2.0 * x[1] + 3.0
+    players = [
+        Player(
+            cost=ContinuousPlayerCost(
+                running=lambda t, x, u: u[0] ** 2,
+                terminal=terminal_1,
+            ),
+            joint_ctrl_slice=slice(0, 1),
+            name="p1",
+        ),
+        Player(
+            cost=ContinuousPlayerCost(
+                running=lambda t, x, u: u[1] ** 2,
+                terminal=terminal_2,
+            ),
+            joint_ctrl_slice=slice(1, 2),
+            name="p2",
+        ),
+    ]
+    game = pdg.games.NonlinearGame(
+        tg=make_timegrid(),
+        dynamics=make_nonlinear_system(),
+        players=players,
+    )
+
+    ir_game = game.to_ir()
+    t = 0.7
+    x = jnp.array([4.0, -1.0])
+
+    assert isinstance(ir_game, NonlinearGameType1)
+    assert jnp.isclose(ir_game.costs[0].terminal(t, x), terminal_1(t, x))
+    assert jnp.isclose(ir_game.costs[1].terminal(t, x), terminal_2(t, x))
+
+
 def test_constrained_nonlineargame_local_lowering_erases_cross_player_control_dependence():
 
     running_1 = lambda t, x, u: u[0] ** 2 + 5.0 * u[1]
