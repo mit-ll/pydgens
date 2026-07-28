@@ -25,7 +25,7 @@ cumulative sum of upstream joint angles.
 Each of the eight players owns one joint-rate entry. All players cooperate by
 using the same terminal objective: place both the midpoint (after link four)
 and the end effector at target points. Together, these two targets define a
-reverse-capital-gamma terminal shape. They differ only in the running effort
+forward-capital-gamma terminal shape. They differ only in the running effort
 term each pays for its own joint:
 
     phi_i(x_T) = 0.5 * w_mid * ||p_mid(x_T) - p_mid_goal||^2
@@ -118,29 +118,28 @@ def build_robot_arm_game(
     # Equal link lengths make the geometry easy to visualize. The initial arm
     # is gently curved instead of fully straight, avoiding a singular initial
     # end-effector Jacobian. The terminal target is a tightly folded arm whose
-    # midpoint and end effector form a reverse capital-gamma shape: the first
-    # four links rise to the midpoint target, and the last four sweep left to
-    # the end-effector target. Reaching this shape requires a large,
+    # midpoint and end effector form a forward capital-gamma shape: the first
+    # four links rise to the midpoint target, and the last four extend right
+    # toward the end-effector target. Reaching this shape requires a large,
     # coordinated reconfiguration of all eight joints rather than a small
-    # perturbation of the initial pose. In a real application the target would
-    # usually come from a task-space planner or user input rather than a known
-    # joint configuration.
+    # perturbation of the initial pose.
     link_lengths = jnp.full((n_players,), 0.25)
     x0 = jnp.array([0.10, -0.16, 0.13, -0.11, 0.08, -0.06, 0.04, -0.02])
-    # The absolute link orientations in this pose rise around +y for the
-    # first half of the arm, then sweep around -x for the second half. It
-    # creates targets near [0, 0.85] for the midpoint and [-0.85, 0.85] for
-    # the end effector: a reversed capital gamma (``┐``) in task space.
-    target_joint_angles = jnp.array(
-        [0.84, 0.43, 0.60, 0.43, 0.11, 0.43, 0.60, 0.43]
-    )
-    target_endpoints = link_endpoint_positions(
-        target_joint_angles,
-        link_lengths=link_lengths,
-    )
+    # These are explicit task-space terminal goals. They are not inferred from
+    # a desired joint configuration: a caller could substitute points supplied
+    # by a planner, perception system, or interactive user interface here.
+    # Together they form a forward capital gamma (``┌``) in task space.
+    target_midpoint = jnp.array([0.0, 0.85])
+    target_position = jnp.array([0.85, 0.85])
     midpoint_index = n_players // 2 - 1
-    target_midpoint = target_endpoints[midpoint_index]
-    target_position = target_endpoints[-1]
+
+    # iLQ is local, so the difficult terminal shape benefits from a warm start
+    # in the correct kinematic basin. These angles are *not* part of the cost.
+    # Their first four absolute link orientations rise around +y, and their
+    # final four wrap around to point approximately +x from the midpoint.
+    target_joint_angles = jnp.array(
+        [0.84, 0.43, 0.60, 0.43, 3.25, 0.43, 0.60, 0.43]
+    )
 
     # A strong terminal weight makes reaching the target more important than
     # minimizing motion. Each player gets the same effort weight here, but
