@@ -14,8 +14,8 @@ Nash strategies.
 
 Used by:
 
-- [`tug_o_war.py`](../src/pydgens/examples/tug_o_war.py)
-- [`satellite_lady_bandit_guard.py`](../src/pydgens/examples/satellite_lady_bandit_guard.py)
+- [`tug_o_war.py`](https://github.com/mit-ll/pydgens/blob/main/src/pydgens/examples/tug_o_war.py)
+- [`satellite_lady_bandit_guard.py`](https://github.com/mit-ll/pydgens/blob/main/src/pydgens/examples/satellite_lady_bandit_guard.py)
 
 Theory notes:
 
@@ -30,8 +30,8 @@ nonlinear game and solves those approximations for local feedback Nash updates.
 
 Used by:
 
-- [`unicycle.py`](../src/pydgens/examples/unicycle.py)
-- [`multi_car_intersection.py`](../src/pydgens/examples/multi_car_intersection.py)
+- [`unicycle.py`](https://github.com/mit-ll/pydgens/blob/main/src/pydgens/examples/unicycle.py)
+- [`multi_car_intersection.py`](https://github.com/mit-ll/pydgens/blob/main/src/pydgens/examples/multi_car_intersection.py)
 
 Theory notes:
 
@@ -46,7 +46,7 @@ trajectories. This solver path is currently beta/pre-release.
 
 Used by:
 
-- [`constrained_integrators.py`](../src/pydgens/examples/constrained_integrators.py)
+- [`constrained_integrators.py`](https://github.com/mit-ll/pydgens/blob/main/src/pydgens/examples/constrained_integrators.py)
 
 Theory notes:
 
