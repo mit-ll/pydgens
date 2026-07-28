@@ -605,6 +605,45 @@ def gradient_terminal_cost_no_checks(
 
     return qterm_i
 
+
+def quadraticize_terminal_cost_no_checks(
+    gterm_i: PlayerCostFnTerminal,
+    t: float,
+    x: jnp.ndarray,
+):
+    """Quadraticize a terminal cost with respect to the joint state.
+
+    The returned terms parameterize the second-order Taylor approximation in
+    terminal-state deviation coordinates ``dx = x_terminal - x``:
+
+    ``gterm_i(t, x + dx) ~= const + qf_i.T @ dx + 0.5 * dx.T @ Qf_i @ dx``.
+
+    Parameters
+    ----------
+    gterm_i
+        Terminal cost callable with signature ``gterm_i(t, x) -> scalar``.
+    t
+        Terminal time at which the cost is evaluated.
+    x
+        Terminal operating-point state.
+
+    Returns
+    -------
+    Qf_i, qf_i
+        Respectively the state Hessian and gradient of the terminal cost at
+        ``(t, x)``. There is no control term for a terminal cost.
+
+    Notes
+    -----
+    This function intentionally performs no validation so it can be used in
+    JAX-transformed solver code. Callers are responsible for providing a
+    scalar, JAX-compatible terminal cost.
+    """
+    gterm_wrt_x = lambda x_: gterm_i(t, x_)
+    qf_i = jax.grad(gterm_wrt_x)(x)
+    Qf_i = jax.hessian(gterm_wrt_x)(x)
+    return Qf_i, qf_i
+
 # jitted function takes g_i explicitly as arg 0 (static), arrays as dynamic args
 @partial(jax.jit, static_argnums=(0,))
 def _grad_cost_traj_jit(g_i, ts, xs, us):

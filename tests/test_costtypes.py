@@ -533,6 +533,41 @@ def test_terminal_grad_with_coupled_components():
     assert jnp.allclose(qterm, expected, atol=1e-7, rtol=1e-7)
 
 
+def test_quadraticize_terminal_cost_returns_hessian_then_gradient():
+    """Terminal quadraticization uses the LQ ``Qf, qf`` ordering."""
+    A = jnp.array([[2.0, -1.0], [-1.0, 4.0]])
+    b = jnp.array([3.0, -2.0])
+
+    def gterm(t, x):
+        return 0.5 * x @ A @ x + b @ x + 7.0 * t
+
+    t = 1.5
+    x = jnp.array([2.0, -3.0])
+    Qf, qf = costtypes.quadraticize_terminal_cost_no_checks(gterm, t, x)
+
+    assert Qf.shape == (2, 2)
+    assert qf.shape == (2,)
+    assert jnp.allclose(Qf, A, atol=1e-7, rtol=1e-7)
+    assert jnp.allclose(qf, A @ x + b, atol=1e-7, rtol=1e-7)
+
+
+def test_quadraticize_terminal_cost_is_jittable_with_static_callable():
+    def gterm(t, x):
+        return x[0] * x[1] + x[0] ** 3 + t
+
+    t = 2.0
+    x = jnp.array([1.5, -2.0])
+    eager = costtypes.quadraticize_terminal_cost_no_checks(gterm, t, x)
+    quadraticize_jit = jax.jit(
+        costtypes.quadraticize_terminal_cost_no_checks,
+        static_argnums=(0,),
+    )
+    jitted = quadraticize_jit(gterm, t, x)
+
+    assert jnp.allclose(jitted[0], eager[0], atol=1e-7, rtol=1e-7)
+    assert jnp.allclose(jitted[1], eager[1], atol=1e-7, rtol=1e-7)
+
+
 # def test_terminal_grad_is_jittable():
 #     """Ensure function works correctly under jax.jit."""
 #     def gterm(t, x):

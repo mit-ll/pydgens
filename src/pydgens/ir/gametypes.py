@@ -471,6 +471,8 @@ def _approx_linear_quadratic_game(nlgame: NonlinearGameType1, op: FixedStepSyste
     q = jnp.zeros((nlgame.nsteps, nlgame.N, nlgame.nx))
     R = jnp.zeros((nlgame.nsteps, nlgame.N, nlgame.nu, nlgame.nu))
     r = jnp.zeros((nlgame.nsteps, nlgame.N, nlgame.nu))
+    Qf = jnp.zeros((nlgame.N, nlgame.nx, nlgame.nx), dtype=Q.dtype),
+    qf = jnp.zeros((nlgame.N, nlgame.nx), dtype=q.dtype),
     for pidx in range(nlgame.N):
         Qp, qp, Rp, rp = quadraticize_cost_joint_ctrl_playerwise_trajectory(
             g_i = nlgame.costs[pidx].running, 
@@ -481,6 +483,10 @@ def _approx_linear_quadratic_game(nlgame: NonlinearGameType1, op: FixedStepSyste
         q = q.at[:, pidx, :].set(qp)
         R = R.at[:, pidx, :, :].set(Rp)
         r = r.at[:, pidx, :].set(rp)
+
+        # Quadraticize terminal cost
+        # TODO
+
 
     # Construct LQGame around current operating point
     # The LQgame is formulated as the second order Taylor expansion
@@ -497,8 +503,8 @@ def _approx_linear_quadratic_game(nlgame: NonlinearGameType1, op: FixedStepSyste
         R = R,
         r = r,
         u_splits = nlgame.u_splits,
-        Qf = jnp.zeros((nlgame.N, nlgame.nx, nlgame.nx), dtype=Q.dtype),
-        qf = jnp.zeros((nlgame.N, nlgame.nx), dtype=q.dtype),
+        Qf = Qf,
+        qf = qf,
     )
 
     return lqgame
