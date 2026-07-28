@@ -1,61 +1,41 @@
 """
-Tutorial: terminal-cost reaching with a cooperative two-player robot arm.
+Tutorial: terminal-cost reaching with a cooperative eight-player robot arm.
 
-This example demonstrates the frontend API for an iLQ game whose important
-objective is a *terminal* cost. Two players jointly move a planar two-link
-robot arm so that its end effector reaches a desired position at the end of a
-finite horizon.
+This example uses the frontend API to solve an iterative linear-quadratic
+(iLQ) game with eight players. It deliberately combines two ideas that are
+easy to miss in smaller examples:
 
-The tutorial's modeling story is:
-
-    1. define the arm's joint-angle state and joint-rate controls
-    2. define nonlinear forward kinematics for the end effector
-    3. assign one joint-rate control to each player
-    4. give both players the same terminal end-effector objective
-    5. give each player a running cost only on its own effort
-    6. build and solve the nonlinear game through the frontend API
+* iLQ supports terminal costs, including nonlinear terminal costs.
+* A game can have more than two or three players: here every arm joint has an
+  independent player.
 
 Problem
 -------
 
-The state contains the two arm joint angles in radians:
+We model a planar eight-link serial arm. Its state is the eight joint angles
+and its joint control vector is the eight joint angular rates:
 
-    x = [theta_1, theta_2]
+    x = [theta_1, ..., theta_8]
+    u = [theta_1_dot, ..., theta_8_dot]
 
-The joint control vector contains joint angular rates:
+The kinematic dynamics are simply ``x_dot = u``. The end-effector position,
+however, is nonlinear in the joint angles because every link orientation is a
+cumulative sum of upstream joint angles.
 
-    u = [theta_1_dot, theta_2_dot]
+Each of the eight players owns one joint-rate entry. All players cooperate by
+using the same terminal objective: place the end effector at a target point.
+They differ only in the running effort term each pays for its own joint:
 
-The kinematic dynamics are therefore especially simple:
+    phi_i(x_T) = 0.5 * w_goal * ||p_ee(x_T) - p_goal||^2
+    ell_i(u)   = 0.5 * r_i * u_i^2
 
-    theta_1_dot = u_1
-    theta_2_dot = u_2
+There is no running state cost. Thus motion in the solution is driven solely
+by the terminal objective, which iLQ maps to the LQ boundary terms ``Qf`` and
+``qf`` at each iteration.
 
-The end-effector position is nonlinear in the joint angles. For link lengths
-``L1`` and ``L2``, it is
+Run this tutorial with:
 
-    p_ee(theta) = [
-        L1 cos(theta_1) + L2 cos(theta_1 + theta_2),
-        L1 sin(theta_1) + L2 sin(theta_1 + theta_2),
-    ]
-
-Both players share the terminal objective
-
-    phi_i(x_T) = 0.5 * w_goal * ||p_ee(x_T) - p_goal||^2.
-
-There is deliberately *no* running state cost. The only running costs are
-the players' individual control efforts:
-
-    ell_1(u) = 0.5 * r_1 * u_1^2
-    ell_2(u) = 0.5 * r_2 * u_2^2.
-
-Consequently, any motion in the solution is caused by the terminal cost. This
-makes the example a compact demonstration of how iLQ quadraticizes a nonlinear
-terminal objective into the LQ game's ``Qf`` and ``qf`` boundary terms.
-
-Run it with:
-
-    python -m pydgens.examples.terminal_cost_robot_arm
+    python -m pydgens.examples.robot_arm
 """
 
 from __future__ import annotations
@@ -70,204 +50,165 @@ def end_effector_position(
     *,
     link_lengths: jnp.ndarray,
 ) -> jnp.ndarray:
-    """Return the planar two-link arm end-effector position.
+    """Compute the planar end-effector position of a serial arm.
 
-    Parameters
-    ----------
-    joint_angles:
-        Joint-angle state ``[theta_1, theta_2]`` in radians.
-    link_lengths:
-        Link lengths ``[L1, L2]``.
-
-    Returns
-    -------
-    jax.Array
-        Cartesian end-effector position ``[px, py]``.
-
-    Notes
-    -----
-    Keeping forward kinematics as a standalone function is useful for both
-    the terminal cost and later visualization code. It uses only JAX array
-    operations, so iLQ can differentiate it to obtain the terminal gradient
-    and Hessian automatically.
+    ``joint_angles[j]`` is the relative rotation at joint ``j``. The absolute
+    orientation of link ``j`` is consequently the cumulative sum of joints
+    through that link. The calculation uses JAX operations only, so iLQ can
+    automatically differentiate this function inside the terminal cost.
     """
-    theta_1, theta_2 = joint_angles
-    link_1, link_2 = link_lengths
-    theta_12 = theta_1 + theta_2
-
+    link_orientations = jnp.cumsum(joint_angles)
     return jnp.array([
-        link_1 * jnp.cos(theta_1) + link_2 * jnp.cos(theta_12),
-        link_1 * jnp.sin(theta_1) + link_2 * jnp.sin(theta_12),
+        jnp.sum(link_lengths * jnp.cos(link_orientations)),
+        jnp.sum(link_lengths * jnp.sin(link_orientations)),
     ])
 
 
-def build_terminal_cost_robot_arm_game(
+def build_robot_arm_game(
     *,
+    n_players: int = 8,
     nt: int = 31,
     dt: float = 0.1,
 ):
-    """Build the frontend game and tutorial metadata for the robot arm.
+    """Build the cooperative multi-player terminal-cost arm game.
 
     Parameters
     ----------
-    nt:
-        Number of state sample nodes. There are ``nt - 1`` control intervals.
-    dt:
-        Duration of each control interval in seconds.
+    n_players:
+        Number of arm joints and players. The tutorial default is eight. One
+        player owns each joint-rate control entry.
+    nt, dt:
+        Number of state nodes and the sample spacing in seconds.
 
     Returns
     -------
     tuple
-        ``(game, x0, link_lengths, target_position, player_1, player_2)``.
-        The player objects are returned so callers can reuse their control
-        slices when inspecting or plotting the solution.
+        ``(game, x0, link_lengths, target_position, players)``. The returned
+        ``players`` tuple is useful to visualization code that wants to label
+        the individual joint controls.
     """
+    if n_players != 8:
+        raise ValueError(
+            "This tutorial is parameterized as an eight-player example; "
+            f"got n_players={n_players}."
+        )
+
     # -----------------------------------------------------------------
-    # Step 0: choose geometric and objective data
+    # Step 0: choose arm geometry, initial pose, and terminal target
     # -----------------------------------------------------------------
     #
-    # The arm begins in a mildly bent pose, away from the fully extended arm's
-    # kinematic singularity. The selected target is reachable and asks the arm
-    # to move upward and inward. It is intentionally specified in task space
-    # (end-effector coordinates), rather than as a desired pair of joint
-    # angles.
-    link_lengths = jnp.array([1.0, 0.7])
-    x0 = jnp.array([0.3, -0.5])
-    target_position = jnp.array([1.62, 0.5])
+    # Equal link lengths make the geometry easy to visualize. The initial arm
+    # is gently curved instead of fully straight, avoiding a singular initial
+    # end-effector Jacobian. The target is generated from another reachable,
+    # gently curved pose. In a real application it would usually come from a
+    # task-space planner or user input rather than from a known joint pose.
+    link_lengths = jnp.full((n_players,), 0.25)
+    x0 = jnp.array([0.10, -0.16, 0.13, -0.11, 0.08, -0.06, 0.04, -0.02])
+    target_pose_for_tutorial = jnp.array(
+        [0.28, -0.30, 0.25, -0.20, 0.16, -0.12, 0.08, -0.04]
+    )
+    target_position = end_effector_position(
+        target_pose_for_tutorial,
+        link_lengths=link_lengths,
+    )
 
-    # ``goal_weight`` controls how important terminal accuracy is relative to
-    # control effort. The effort weights may be different if one joint is more
-    # expensive to actuate than the other.
-    goal_weight = 800.0
-    effort_weight_1 = 0.05
-    effort_weight_2 = 0.05
+    # A strong terminal weight makes reaching the target more important than
+    # minimizing motion. Each player gets the same effort weight here, but
+    # this could be made joint-specific to represent different actuators.
+    goal_weight = 1_000.0
+    effort_weights = jnp.full((n_players,), 0.05)
 
     # -----------------------------------------------------------------
     # Step 1: define the finite time grid
     # -----------------------------------------------------------------
-    #
-    # ``nt`` indexes state nodes, including the terminal state. With the
-    # defaults there are 31 nodes and 30 control intervals, spanning 3 seconds.
+    # ``nt`` indexes state nodes, including the terminal node. Therefore there
+    # are ``nt - 1`` joint-rate control intervals. The defaults span 3 seconds.
     tg = pdg.time_grid(nt=nt, dt=dt)
 
     # -----------------------------------------------------------------
-    # Step 2: define joint-space nonlinear dynamics
+    # Step 2: define the shared joint-space dynamics
     # -----------------------------------------------------------------
+    # All players' controls are assembled into one joint vector ``u``. The
+    # dynamics do not need to know which player owns which entry:
     #
-    # We use velocity-controlled joints. The dynamics receive the *joint*
-    # control vector, not separate player-local vectors:
+    #     theta_dot_j = u_j, for j = 1, ..., 8.
     #
-    #   x_dot = [u[0], u[1]].
-    #
-    # Although these kinematics are linear in joint space, the task-space
-    # terminal objective below is nonlinear because of forward kinematics.
+    # The nonlinearity of this problem comes from the end-effector terminal
+    # cost, not from these velocity-controlled joint dynamics.
     dynamics = pdg.nonlinear_dynamics(
-        nx=2,
-        nu=2,
-        dynamics=lambda t, x, u: jnp.array([u[0], u[1]]),
+        nx=n_players,
+        nu=n_players,
+        dynamics=lambda t, x, u: u,
     )
 
     # -----------------------------------------------------------------
-    # Step 3: define the shared terminal objective
+    # Step 3: define the common nonlinear terminal cost
     # -----------------------------------------------------------------
-    #
-    # Every nonlinear player cost has a running function ``running(t, x, u)``
-    # and may have a terminal function ``terminal(t, x)``. There is no control
-    # argument in the terminal function because no control exists at the final
-    # state node.
-    #
-    # Both players receive this same terminal objective. This makes the game
-    # cooperative: each player independently chooses its own control to reduce
-    # the common final end-effector error, while accounting for its own effort.
+    # The terminal-cost signature is ``terminal(t, x)``. It has no control
+    # argument because a finite-horizon trajectory has no control at its final
+    # state node. iLQ differentiates this function with respect to the terminal
+    # joint-angle vector and supplies the result to the LQ solver as ``Qf/qf``.
     def terminal_end_effector_cost(t, x):
-        del t  # The target is time-invariant, but the standard signature has t.
-        position_error = end_effector_position(
-            x,
-            link_lengths=link_lengths,
-        ) - target_position
-        return 0.5 * goal_weight * jnp.sum(position_error**2)
+        del t  # The target is fixed in time for this tutorial.
+        error = end_effector_position(x, link_lengths=link_lengths) - target_position
+        return 0.5 * goal_weight * jnp.sum(error**2)
 
     # -----------------------------------------------------------------
-    # Step 4: define player costs and control ownership
+    # Step 4: define all eight players
     # -----------------------------------------------------------------
-    #
-    # Cost functions are written over the entire joint control vector. Each
-    # player nevertheless penalizes only the component it owns:
-    #
-    #   Player 1 owns u[0], the first-joint angular rate.
-    #   Player 2 owns u[1], the second-joint angular rate.
-    #
-    # This produces the block-separable control structure required by iLQ.
-    player_1_cost = pdg.player_cost(
-        running=lambda t, x, u: 0.5 * effort_weight_1 * u[0] ** 2,
-        terminal=terminal_end_effector_cost,
-    )
-    player_2_cost = pdg.player_cost(
-        running=lambda t, x, u: 0.5 * effort_weight_2 * u[1] ** 2,
-        terminal=terminal_end_effector_cost,
-    )
-
-    player_1 = pdg.player(
-        name="shoulder_joint_player",
-        cost=player_1_cost,
-        joint_ctrl_slice=slice(0, 1),
-    )
-    player_2 = pdg.player(
-        name="elbow_joint_player",
-        cost=player_2_cost,
-        joint_ctrl_slice=slice(1, 2),
-    )
+    # Player ``i`` owns the one-entry slice ``u[i:i+1]`` and pays effort only
+    # on ``u[i]``. Every player receives the same terminal callable, making
+    # this a cooperative potential game. The frontend nevertheless represents
+    # eight distinct players, so it exercises arbitrary player count, control
+    # ownership, and player-aligned terminal ``Qf/qf`` terms.
+    players = []
+    for i in range(n_players):
+        effort_weight_i = effort_weights[i]
+        player_cost = pdg.player_cost(
+            running=lambda t, x, u, i=i, weight=effort_weight_i: (
+                0.5 * weight * u[i] ** 2
+            ),
+            terminal=terminal_end_effector_cost,
+        )
+        players.append(
+            pdg.player(
+                name=f"joint_{i + 1}_player",
+                cost=player_cost,
+                joint_ctrl_slice=slice(i, i + 1),
+            )
+        )
 
     # -----------------------------------------------------------------
-    # Step 5: build the semantic frontend game
+    # Step 5: build the frontend nonlinear game
     # -----------------------------------------------------------------
-    #
-    # The frontend factory selects ``NonlinearGame`` because the dynamics and
-    # costs are callable nonlinear models. ``pdg.solve(..., method="ilq")``
-    # below will lower this semantic object to ``NonlinearGameType1`` and solve
-    # the iterative LQ approximations.
-    game = pdg.game(
-        tg=tg,
-        dynamics=dynamics,
-        players=[player_1, player_2],
-    )
-
-    return game, x0, link_lengths, target_position, player_1, player_2
+    # ``pdg.game`` selects the frontend ``NonlinearGame`` type. Calling
+    # ``pdg.solve(..., method="ilq")`` lowers it to the iLQ IR and solves the
+    # repeated linear-quadratic game approximations.
+    game = pdg.game(tg=tg, dynamics=dynamics, players=players)
+    return game, x0, link_lengths, target_position, tuple(players)
 
 
 def main() -> None:
-    """Solve the tutorial game and print terminal-reaching diagnostics."""
-    (
-        game,
-        x0,
-        link_lengths,
-        target_position,
-        player_1,
-        player_2,
-    ) = build_terminal_cost_robot_arm_game()
+    """Solve the eight-player tutorial game and print terminal diagnostics."""
+    game, x0, link_lengths, target_position, players = build_robot_arm_game()
 
     # -----------------------------------------------------------------
-    # Step 6: solve using iLQ
+    # Step 6: solve with iLQ
     # -----------------------------------------------------------------
-    #
-    # The initial strategy is zero by default, so the initial operating point
-    # keeps the arm at its initial joint configuration. iLQ then repeatedly
-    # linearizes the dynamics and quadraticizes the nonlinear terminal
-    # end-effector error around its current terminal joint-angle state.
+    # The zero default strategy leaves the arm at ``x0`` for the first
+    # operating trajectory. Each iLQ iteration then quadraticizes the common
+    # nonlinear terminal objective about its current terminal configuration.
     solution = pdg.solve(
         game,
         x0=x0,
         method="ilq",
         max_iters=50,
-        converged_max_diff=1e-4,
+        converged_max_diff=1e-2,
     )
 
     # -----------------------------------------------------------------
-    # Step 7: inspect the solution
+    # Step 7: inspect the terminal configuration and player controls
     # -----------------------------------------------------------------
-    #
-    # ``states`` has one entry per time node. ``joint_controls`` has one fewer
-    # entry because controls act over intervals and there is no terminal control.
     states = solution.states
     joint_controls = solution.joint_controls
     terminal_joint_angles = states[-1]
@@ -276,17 +217,15 @@ def main() -> None:
         link_lengths=link_lengths,
     )
     terminal_error = terminal_position - target_position
+    mean_absolute_rates = jnp.mean(jnp.abs(joint_controls), axis=0)
 
-    print(solution.format_summary("Terminal-Cost Robot Arm"))
-    print(f"target end effector:   {target_position}")
-    print(f"terminal end effector: {terminal_position}")
-    print(f"terminal error norm:   {jnp.linalg.norm(terminal_error):.6f}")
-    print(f"terminal joint angles: {terminal_joint_angles}")
-    print(
-        "mean |joint rate|:      "
-        f"[{jnp.mean(jnp.abs(joint_controls[:, player_1.joint_ctrl_slice])):.6f}, "
-        f"{jnp.mean(jnp.abs(joint_controls[:, player_2.joint_ctrl_slice])):.6f}]"
-    )
+    print(solution.format_summary("Eight-Player Terminal-Cost Robot Arm"))
+    print(f"players:                 {len(players)}")
+    print(f"target end effector:     {target_position}")
+    print(f"terminal end effector:   {terminal_position}")
+    print(f"terminal error norm:     {jnp.linalg.norm(terminal_error):.6f}")
+    print(f"terminal joint angles:   {terminal_joint_angles}")
+    print(f"mean |joint rates|:      {mean_absolute_rates}")
 
 
 if __name__ == "__main__":
