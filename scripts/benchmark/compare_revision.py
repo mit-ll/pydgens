@@ -78,6 +78,31 @@ def benchmark_command(
     ]
 
 
+def default_python(repository: Path) -> Path:
+    """Prefer the project virtual-environment interpreter when it exists."""
+    if os.name == "nt":
+        candidate = repository / ".venv" / "Scripts" / "python.exe"
+    else:
+        candidate = repository / ".venv" / "bin" / "python"
+    return candidate if candidate.is_file() else Path(sys.executable)
+
+
+def require_pytest_benchmark(python: Path) -> None:
+    """Ensure the selected interpreter has the benchmark management module."""
+    result = subprocess.run(
+        [str(python), "-c", "import pytest_benchmark"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if result.returncode:
+        raise RuntimeError(
+            f"pytest-benchmark is not installed for {python}. "
+            "Run `uv sync --extra test` from the repository root, or pass "
+            "--python PATH` for an interpreter that has pytest-benchmark installed."
+        )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -103,8 +128,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--python",
-        default=sys.executable,
-        help="Python interpreter used for both runs (default: current interpreter).",
+        help=(
+            "Python interpreter used for both runs (default: the project .venv "
+            "interpreter, if present)."
+        ),
     )
     parser.add_argument(
         "--name",
@@ -147,13 +174,14 @@ def main() -> int:
     if not test_file.is_file():
         raise RuntimeError(f"Benchmark test file does not exist: {test_file}")
 
-    python = Path(args.python).expanduser().resolve()
+    python = (
+        Path(args.python).expanduser().resolve()
+        if args.python
+        else default_python(repository).resolve()
+    )
     if not python.is_file():
         raise RuntimeError(f"Python interpreter does not exist: {python}")
-    run(
-        [str(python), "-c", "import pytest_benchmark"],
-        cwd=repository,
-    )
+    require_pytest_benchmark(python)
 
     baseline_commit = git_output(repository, "rev-parse", "--verify", f"{args.baseline}^{{commit}}")
     current_commit = git_output(repository, "rev-parse", "HEAD")
