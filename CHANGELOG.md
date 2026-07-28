@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `examples/robot_arm.py` example of multiplayer robot arm motion demonstrating terminal cost in an ILQ-solved game
 - `costtypes.py` quadraticization function of terminal cost
 - `timetypes.py` new `tf` terminal time property for TimeGrid
 
