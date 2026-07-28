@@ -13,6 +13,7 @@ Examples live in [`src/pydgens/examples/`](https://github.com/mit-ll/pydgens/tre
 | [Tug-of-War](https://github.com/mit-ll/pydgens/blob/main/src/pydgens/examples/tug_o_war.py) | `python -m pydgens.examples.tug_o_war` | `LQ` -> feedback Nash equilibrium | Top-level API | Smallest LQ walkthrough; includes analytical comparison. |
 | [Satellite Lady-Bandit-Guard](https://github.com/mit-ll/pydgens/blob/main/src/pydgens/examples/satellite_lady_bandit_guard.py) | `python -m pydgens.examples.satellite_lady_bandit_guard` | `LQ` -> feedback Nash equilibrium | Top-level API | Showcase orbital LQ example with Clohessy-Wiltshire dynamics and coupled quadratic costs; related to [`spacegym-kspdg`](https://github.com/mit-ll/spacegym-kspdg). |
 | [Two-Player Unicycle](https://github.com/mit-ll/pydgens/blob/main/src/pydgens/examples/unicycle.py) | `python -m pydgens.examples.unicycle` | `iLQ` -> local feedback Nash equilibrium | Top-level API | Beginner nonlinear example using the semantic frontend. |
+| [Eight-Player Terminal-Cost Robot Arm](https://github.com/mit-ll/pydgens/blob/main/src/pydgens/examples/robot_arm.py) | `python -m pydgens.examples.robot_arm` | `iLQ` -> local feedback Nash equilibrium | Top-level API | Cooperative eight-link arm with player-owned joints and midpoint/end-effector terminal shape targets. |
 | [Multi-Car Intersection](https://github.com/mit-ll/pydgens/blob/main/src/pydgens/examples/multi_car_intersection.py) | `python -m pydgens.examples.multi_car_intersection` | `iLQ` -> local feedback Nash equilibrium | Top-level API | Showcase nonlinear example with soft collision, lane, and speed penalties. |
 | [Constrained Integrators](https://github.com/mit-ll/pydgens/blob/main/src/pydgens/examples/constrained_integrators.py) | `python -m pydgens.examples.constrained_integrators` | `AL` -> local open-loop Nash equilibrium | Top-level API | Beginner constrained example using the frontend API. |
 | [IR Two-Player Unicycle](https://github.com/mit-ll/pydgens/blob/main/src/pydgens/examples/ir_unicycle.py) | `python -m pydgens.examples.ir_unicycle` | `iLQ` -> local feedback Nash equilibrium | IR | Direct IR companion to `unicycle.py`. |
@@ -59,6 +60,24 @@ Run the iterative linear-quadratic solver (`iLQ`) on a nonlinear game where two 
 
 ```bash
 python -m pydgens.examples.unicycle
+```
+
+## Eight-Player Terminal-Cost Robot Arm
+
+Source: [`src/pydgens/examples/robot_arm.py`](https://github.com/mit-ll/pydgens/blob/main/src/pydgens/examples/robot_arm.py)
+
+Run an eight-player cooperative planar arm game where each player owns one
+joint-rate control. The shared nonlinear terminal objective places both the
+midpoint and the end effector at task-space targets, forming a terminal shape:
+
+```bash
+python -m pydgens.examples.robot_arm
+```
+
+Optional visualization script:
+
+```bash
+uv run --extra visuals python scripts/visuals/robot_arm_gif.py --output docs/assets/robot_arm.gif
 ```
 
 ## Multi-Car Intersection

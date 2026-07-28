@@ -34,6 +34,19 @@ PYDGENS provides numerical solvers for approximating equilibrium solutions in mu
   </tr>
   <tr>
     <td width="72%">
+      <img src="https://raw.githubusercontent.com/mit-ll/pydgens/main/docs/assets/robot_arm.gif" alt="Eight-player terminal-cost robot arm game solved with PYDGENS" width="100%">
+    </td>
+    <td width="28%">
+      <strong>Eight-player terminal-cost robot arm</strong>
+      <br><br>
+      Cooperative joint players form a task-space terminal shape using midpoint and end-effector goals.
+      <br><br>
+      <a href="https://github.com/mit-ll/pydgens/blob/main/src/pydgens/examples/robot_arm.py">Source</a> ·
+      <a href="https://mit-ll.github.io/pydgens/examples/#eight-player-terminal-cost-robot-arm">Docs</a>
+    </td>
+  </tr>
+  <tr>
+    <td width="72%">
       <img src="https://raw.githubusercontent.com/mit-ll/pydgens/main/docs/assets/satellite_lady_bandit_guard.gif" alt="Satellite Lady-Bandit-Guard game solved with PYDGENS" width="100%">
     </td>
     <td width="28%">
@@ -115,6 +128,7 @@ Further examples of solving for equilibria in differential games can be run dire
 ```bash
 python -m pydgens.examples.tug_o_war  # minimal linear-quadratic (LQ) game
 python -m pydgens.examples.unicycle   # nonlinear game solved with iterative method
+python -m pydgens.examples.robot_arm  # eight-player nonlinear terminal-cost game
 python -m pydgens.examples.constrained_integrators  # constrained game solved Lagrangian method
 ```
 
