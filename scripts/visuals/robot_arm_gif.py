@@ -56,6 +56,7 @@ def make_animation(
     states,
     controls,
     link_lengths,
+    target_midpoint,
     target_position,
     dt: float,
     output: Path,
@@ -67,6 +68,7 @@ def make_animation(
     states = np.asarray(states, dtype=float)
     controls = np.asarray(controls, dtype=float)
     link_lengths = np.asarray(link_lengths, dtype=float)
+    target_midpoint = np.asarray(target_midpoint, dtype=float)
     target_position = np.asarray(target_position, dtype=float)
 
     points_by_frame = np.stack(
@@ -74,6 +76,8 @@ def make_animation(
         axis=0,
     )
     end_effector_path = points_by_frame[:, -1, :]
+    midpoint_index = len(link_lengths) // 2
+    midpoint_path = points_by_frame[:, midpoint_index, :]
     initial_points = points_by_frame[0]
     maximum_reach = float(np.sum(link_lengths))
 
@@ -105,6 +109,17 @@ def make_animation(
         zorder=1,
     )
     ax_arm.scatter(
+        target_midpoint[0],
+        target_midpoint[1],
+        marker="X",
+        s=105,
+        color=TARGET_COLOR,
+        edgecolor="white",
+        linewidth=0.9,
+        label="midpoint target",
+        zorder=5,
+    )
+    ax_arm.scatter(
         target_position[0],
         target_position[1],
         marker="*",
@@ -118,6 +133,10 @@ def make_animation(
     path_line, = ax_arm.plot(
         [], [], color=PATH_COLOR, linewidth=1.7, alpha=0.75,
         label="end-effector path", zorder=2,
+    )
+    midpoint_path_line, = ax_arm.plot(
+        [], [], color="#7c3aed", linewidth=1.7, alpha=0.75,
+        linestyle="--", label="midpoint path", zorder=2,
     )
     # Link i uses Player i's color, matching the rate trace in the right panel.
     link_lines = []
@@ -181,14 +200,27 @@ def make_animation(
             end_effector_path[:frame + 1, 0],
             end_effector_path[:frame + 1, 1],
         )
+        midpoint_path_line.set_data(
+            midpoint_path[:frame + 1, 0],
+            midpoint_path[:frame + 1, 1],
+        )
         time_cursor.set_xdata([state_times[frame], state_times[frame]])
 
-        error_norm = np.linalg.norm(end_effector_path[frame] - target_position)
+        midpoint_error_norm = np.linalg.norm(midpoint_path[frame] - target_midpoint)
+        end_error_norm = np.linalg.norm(end_effector_path[frame] - target_position)
         terminal_text.set_text(
             f"time: {state_times[frame]:.2f} s\n"
-            f"target error: {error_norm:.4f} m"
+            f"midpoint error: {midpoint_error_norm:.4f} m\n"
+            f"end error: {end_error_norm:.4f} m"
         )
-        return (*link_lines, joint_markers, path_line, time_cursor, terminal_text)
+        return (
+            *link_lines,
+            joint_markers,
+            path_line,
+            midpoint_path_line,
+            time_cursor,
+            terminal_text,
+        )
 
     animation = FuncAnimation(
         fig,
@@ -245,6 +277,7 @@ def main() -> None:
         game,
         x0,
         link_lengths,
+        target_midpoint,
         target_position,
         target_joint_angles,
         players,
@@ -269,6 +302,7 @@ def main() -> None:
         states=solution.states,
         controls=solution.joint_controls,
         link_lengths=link_lengths,
+        target_midpoint=target_midpoint,
         target_position=target_position,
         dt=game.tg.dt,
         output=args.output,
