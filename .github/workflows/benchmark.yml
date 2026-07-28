@@ -27,7 +27,7 @@ jobs:
           cache-dependency-glob: uv.lock
 
       - name: Install project
-        run: uv sync --locked --extra dev
+        run: uv sync --locked --extra test
 
       - name: Prepare output directories
         run: |

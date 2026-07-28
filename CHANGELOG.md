@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `pyproject.toml` and CI workflows now omit the Windows-only `tensorboard-plugin-profile` dependency and install only the extras required by each job.
 - `pyproject.toml` reorganized optional dependencies into `test`, `profile`, `docs`, `visuals`, `dev` (all prior dependecies), and `full` (pass-through wrapper of `dev`) for clarity of the purpose of each dependency
 - `alsolver.py` Refactored augmented-Lagrangian residual assembly to reuse shared constraint linearizations and residual ingredients across stationarity-gradient computation.
 - `alsolver.py` Reduced duplicated residual work in the stationarity Newton metrics path by deriving optimality, dynamics violation, and merit metrics from a single structured AL residual evaluation.
