@@ -9,6 +9,8 @@ import flax.struct
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
+from pydgens.ir.diagnostictypes import SolverDiag
+
 @flax.struct.dataclass
 class JointAugmentedLagrangianState:
     """
@@ -494,7 +496,7 @@ class ALSolverOuterIterDiag:
 
 
 @dataclass(frozen=True)
-class ALSolverDiag:
+class ALSolverDiag(SolverDiag):
     """
     Diagnostics for the full Augmented Lagrangian outer solve.
 
@@ -509,7 +511,4 @@ class ALSolverDiag:
     history : tuple[ALSolverOuterIterDiag, ...]
         Per-outer-iteration diagnostics.
     """
-    converged: bool
-    iters: int
-    reason: str
     history: Tuple[ALSolverOuterIterDiag, ...]

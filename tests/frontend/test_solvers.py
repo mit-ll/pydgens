@@ -371,6 +371,37 @@ def test_solve_ilq_frontend_game_auto_dispatches(monkeypatch):
     assert result.strategy is strategy
 
 
+def test_solve_ilq_collects_opt_in_diagnostics(monkeypatch):
+
+    class FakeNLGame1:
+        tg = SimpleNamespace(nt=3)
+
+    monkeypatch.setattr(fsolvers, "NonlinearGameType1", FakeNLGame1)
+    game = FakeNLGame1()
+    diagnostics = SimpleNamespace(converged=False, iters=2, reason="max_iters")
+
+    def fake_solve_ilqgame_feedback(nlgame, x0, **kwargs):
+        assert nlgame is game
+        assert kwargs["return_diagnostics"] is True
+        return False, "trajectory", "strategy", diagnostics
+
+    monkeypatch.setattr(
+        fsolvers,
+        "solve_ilqgame_feedback",
+        fake_solve_ilqgame_feedback,
+    )
+
+    result = pdg.solve(
+        game,
+        x0=jnp.array([2.0]),
+        collect_diagnostics=True,
+    )
+
+    assert result.converged is False
+    assert result.diagnostics is diagnostics
+    assert result.raw == (False, "trajectory", "strategy", diagnostics)
+
+
 def test_solve_ilq_requires_x0(monkeypatch):
 
     class FakeNLGame1:

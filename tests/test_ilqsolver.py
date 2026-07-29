@@ -750,6 +750,37 @@ def test_solve_ilqgame_feedback_zero_step_game():
     assert jnp.allclose(traj.xs[0], x0)
 
 
+def test_solve_ilqgame_feedback_returns_opt_in_diagnostics_for_zero_step_game():
+    """Opt-in diagnostics preserve the legacy solver path and record termination."""
+    tg = TimeGrid(nt=1, dt=0.1)
+    cs = SampledContinuousSystemType1(
+        tg=tg,
+        nx=1,
+        nu=1,
+        dynamics=lambda t, x, u: jnp.zeros_like(x),
+    )
+    nlgame = NonlinearGameType1(
+        cs=cs,
+        N=1,
+        costs=[PlayerCostSpecContinuous(running=lambda t, x, u: 0.0)],
+        u_splits=jnp.array([1]),
+    )
+
+    converged, _, _, diagnostics = solve_ilqgame_feedback(
+        nlgame=nlgame,
+        x0=jnp.array([2.0]),
+        return_diagnostics=True,
+    )
+
+    assert converged is True
+    assert diagnostics.converged is True
+    assert diagnostics.iters == 1
+    assert diagnostics.reason == "converged"
+    assert len(diagnostics.history) == 1
+    assert diagnostics.history[0].backtracking_succeeded is True
+    assert diagnostics.history[0].accepted_alpha_scale == 0.5
+
+
 def test_solve_ilqgame_feedback_terminal_target_moves_one_stage_state():
     """A terminal target cost drives a nonzero control through the full iLQ path."""
     tg = TimeGrid(nt=2, dt=1.0)

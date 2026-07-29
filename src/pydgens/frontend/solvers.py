@@ -170,6 +170,7 @@ def solve(
     method: SolveMethod = "auto",
     op0: FixedStepPrimalDualTrajectory | None = None,
     al_state0: JointAugmentedLagrangianState | None = None,
+    collect_diagnostics: bool = False,
     **solver_kwargs,
 ) -> SolveResult:
     """
@@ -206,6 +207,11 @@ def solve(
 
     al_state0:
         Optional initial augmented Lagrangian state for the AL solver.
+
+    collect_diagnostics:
+        Request retained per-iteration diagnostics from iLQ. This is opt-in
+        because converting and retaining scalar history can synchronize JAX
+        work. AL diagnostics are always returned by the current AL backend.
 
     **solver_kwargs:
         Additional keyword arguments forwarded to the selected low-level
@@ -257,6 +263,7 @@ def solve(
         return _solve_ilq_frontend(
             game=game,
             x0=x0,
+            collect_diagnostics=collect_diagnostics,
             **solver_kwargs,
         )
 
@@ -358,6 +365,7 @@ def _solve_ilq_frontend(
     *,
     game,
     x0,
+    collect_diagnostics: bool,
     **solver_kwargs,
 ) -> SolveResult:
     """
@@ -378,18 +386,25 @@ def _solve_ilq_frontend(
     else:
         nlgame = game
 
-    converged, trajectory, strategy = solve_ilqgame_feedback(
+    result = solve_ilqgame_feedback(
         nlgame,
         x0=jnp.asarray(x0),
+        return_diagnostics=collect_diagnostics,
         **solver_kwargs,
     )
+    if collect_diagnostics:
+        converged, trajectory, strategy, diagnostics = result
+    else:
+        converged, trajectory, strategy = result
+        diagnostics = None
 
     return SolveResult(
         method="ilq",
         converged=bool(converged),
         strategy=strategy,
         trajectory=trajectory,
-        raw=(converged, trajectory, strategy),
+        diagnostics=diagnostics,
+        raw=result,
     )
 
 
