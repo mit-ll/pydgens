@@ -3023,6 +3023,7 @@ def al_solve(
     ls_max_iters: int = 20,
     normkind: ResidualNormKind = "l1_mean",
     jacobian_backend: JacobianBackendKind = "structured",
+    collect_diagnostics: bool = True,
 ) -> Tuple[trajtypes.FixedStepPrimalDualTrajectory, altypes.JointAugmentedLagrangianState, altypes.ALSolverDiag]:
     """
     Solve a constrained dynamic game using an Augmented Lagrangian (AL) outer loop with a
@@ -3163,6 +3164,12 @@ def al_solve(
     normkind : ResidualNormKind
         Merit norm used for line search and recorded diagnostics (e.g. "l1_mean" to match ALGAMES).
 
+    collect_diagnostics : bool, default=True
+        Whether to retain the per-outer-iteration diagnostic history.  The
+        final ``ALSolverDiag`` is always returned so callers can inspect the
+        termination status.  Disabling collection avoids constructing the
+        history records and their AL-state scalar summaries.
+
     Returns
     -------
     op : FixedStepPrimalDualTrajectory
@@ -3172,10 +3179,9 @@ def al_solve(
         Final auxiliary-constraint AL state (λ, ρ) after outer iterations.
 
     diag : ALSolverDiag
-        Solver diagnostics, including per-outer-iteration history with:
-        - inner Newton outcome (iters, reason, residual norm)
-        - feasibility metrics (dyn/ineq/eq)
-        - λ/ρ magnitude summaries
+        Solver termination diagnostics. When ``collect_diagnostics=True``,
+        this additionally includes per-outer-iteration history with inner
+        Newton outcomes, feasibility metrics, and λ/ρ summaries.
 
     Notes
     -----
@@ -3206,7 +3212,9 @@ def al_solve(
 
     op = op0
     alstate = alstate0
-    hist: List[altypes.ALSolverOuterIterDiag] = []
+    hist: List[altypes.ALSolverOuterIterDiag] | None = (
+        [] if collect_diagnostics else None
+    )
 
     for k in range(max_iters):
         if debug_enabled:
@@ -3282,22 +3290,23 @@ def al_solve(
         )
         ineq_vio, eq_vio = _constraint_violation_metrics(c_ineq, c_eq)
 
-        # record diagnostics
-        hist.append(altypes.ALSolverOuterIterDiag(
-            outer_iter=k,
-            newton_converged=newton_diag.converged,
-            newton_iters=newton_diag.iters,
-            newton_reason=newton_diag.reason,
-            residual_norm_final=g_norm,
-            opt_vio_inf=opt_vio,
-            dyn_vio_inf=dyn_vio,
-            ineq_vio_inf=ineq_vio,
-            eq_vio_inf=eq_vio,
-            rho_ineq_max=float(jnp.max(alstate.rho_ineq)) if alstate.rho_ineq.size else 0.0,
-            rho_eq_max=float(jnp.max(alstate.rho_eq)) if alstate.rho_eq.size else 0.0,
-            lam_ineq_max=float(jnp.max(alstate.lam_ineq)) if alstate.lam_ineq.size else 0.0,
-            lam_eq_max=float(jnp.max(alstate.lam_eq)) if alstate.lam_eq.size else 0.0,
-        ))
+        if collect_diagnostics:
+            assert hist is not None
+            hist.append(altypes.ALSolverOuterIterDiag(
+                outer_iter=k,
+                newton_converged=newton_diag.converged,
+                newton_iters=newton_diag.iters,
+                newton_reason=newton_diag.reason,
+                residual_norm_final=g_norm,
+                opt_vio_inf=opt_vio,
+                dyn_vio_inf=dyn_vio,
+                ineq_vio_inf=ineq_vio,
+                eq_vio_inf=eq_vio,
+                rho_ineq_max=float(jnp.max(alstate.rho_ineq)) if alstate.rho_ineq.size else 0.0,
+                rho_eq_max=float(jnp.max(alstate.rho_eq)) if alstate.rho_eq.size else 0.0,
+                lam_ineq_max=float(jnp.max(alstate.lam_ineq)) if alstate.lam_ineq.size else 0.0,
+                lam_eq_max=float(jnp.max(alstate.lam_eq)) if alstate.lam_eq.size else 0.0,
+            ))
 
         if debug_enabled:
             logger.debug(
@@ -3322,7 +3331,12 @@ def al_solve(
             (eq_vio <= eq_tol)      and 
             (opt_vio <= opt_tol)
         ):
-            diag = altypes.ALSolverDiag(converged=True, iters=k + 1, reason="converged", history=tuple(hist))
+            diag = altypes.ALSolverDiag(
+                converged=True,
+                iters=k + 1,
+                reason="converged",
+                history=tuple(hist) if hist is not None else (),
+            )
             if debug_enabled:
                 logger.debug(
                     "AL outer solve converged call=%d iters=%d total_dt=%.3fs",
@@ -3338,7 +3352,12 @@ def al_solve(
         # ---- 4) Increase schedule update on ρ ----
         alstate = rho_increase_schedule(alstate, rho_increase=rho_increase, rho_max=rho_max, validate=True)
 
-    diag = altypes.ALSolverDiag(converged=False, iters=max_iters, reason="max_outer_iters", history=tuple(hist))
+    diag = altypes.ALSolverDiag(
+        converged=False,
+        iters=max_iters,
+        reason="max_outer_iters",
+        history=tuple(hist) if hist is not None else (),
+    )
     if debug_enabled:
         logger.debug(
             "AL outer solve stop call=%d iters=%d reason=%s total_dt=%.3fs",

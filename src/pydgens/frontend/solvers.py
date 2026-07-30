@@ -209,9 +209,9 @@ def solve(
         Optional initial augmented Lagrangian state for the AL solver.
 
     collect_diagnostics:
-        Request retained per-iteration diagnostics from iLQ. This is opt-in
+        Request retained per-iteration diagnostics from iLQ and AL. This is opt-in
         because converting and retaining scalar history can synchronize JAX
-        work. AL diagnostics are always returned by the current AL backend.
+        work. Both solvers always return a compact termination diagnostic.
 
     **solver_kwargs:
         Additional keyword arguments forwarded to the selected low-level
@@ -273,6 +273,7 @@ def solve(
             x0=x0,
             op0=op0,
             al_state0=al_state0,
+            collect_diagnostics=collect_diagnostics,
             **solver_kwargs,
         )
 
@@ -414,6 +415,7 @@ def _solve_al_frontend(
     x0,
     op0: FixedStepPrimalDualTrajectory | None,
     al_state0: JointAugmentedLagrangianState | None,
+    collect_diagnostics: bool,
     **solver_kwargs,
 ) -> SolveResult:
     """
@@ -448,12 +450,17 @@ def _solve_al_frontend(
         game,
         op0,
         al_state0,
+        collect_diagnostics=collect_diagnostics,
         **solver_kwargs,
     )
 
     return SolveResult(
         method="al",
-        converged=None,
+        converged=(
+            bool(diagnostics.converged)
+            if hasattr(diagnostics, "converged")
+            else None
+        ),
         primal_dual_trajectory=primal_dual_trajectory,
         al_state=al_state,
         diagnostics=diagnostics,

@@ -435,6 +435,7 @@ def test_solve_al_frontend_game_auto_dispatches(monkeypatch):
         pass
 
     captured = {}
+    diagnostics = SimpleNamespace(converged=True)
 
     def fake_init_joint_augmented_lagrangian_state(*, nc_ineq, nc_eq):
         captured["nc_ineq"] = nc_ineq
@@ -445,7 +446,8 @@ def test_solve_al_frontend_game_auto_dispatches(monkeypatch):
         captured["game"] = nlgame
         captured["op0"] = op0
         captured["alstate0"] = alstate0
-        return "pdtraj", "alstate", "diag"
+        captured["collect_diagnostics"] = kwargs["collect_diagnostics"]
+        return "pdtraj", "alstate", diagnostics
 
     monkeypatch.setattr(
         fsolvers,
@@ -464,9 +466,11 @@ def test_solve_al_frontend_game_auto_dispatches(monkeypatch):
     )
 
     assert result.method == "al"
+    assert result.converged is True
     assert result.primal_dual_trajectory == "pdtraj"
     assert result.al_state == "alstate"
-    assert result.diagnostics == "diag"
+    assert result.diagnostics is diagnostics
+    assert captured["collect_diagnostics"] is False
     assert isinstance(captured["game"], fsolvers.NonlinearGameType2)
     assert isinstance(
         captured["op0"],
@@ -509,6 +513,7 @@ def test_solve_al_auto_dispatches_with_default_initialization(monkeypatch):
         captured["game"] = nlgame
         captured["op0"] = op0
         captured["alstate0"] = alstate0
+        captured["collect_diagnostics"] = kwargs["collect_diagnostics"]
         return "pdtraj", "alstate", "diag"
 
     monkeypatch.setattr(
@@ -527,14 +532,17 @@ def test_solve_al_auto_dispatches_with_default_initialization(monkeypatch):
     result = pdg.solve(
         game,
         x0=jnp.array([3.0, -1.0]),
+        collect_diagnostics=True,
     )
 
     assert result.method == "al"
+    assert result.converged is None
     assert result.primal_dual_trajectory == "pdtraj"
     assert result.al_state == "alstate"
     assert result.diagnostics == "diag"
 
     assert captured["game"] is game
+    assert captured["collect_diagnostics"] is True
     assert captured["nc_ineq"] == 5
     assert captured["nc_eq"] == 2
     assert isinstance(

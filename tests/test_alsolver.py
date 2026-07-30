@@ -5739,6 +5739,28 @@ def test_al_solve_autodiff_outer_updates_lambda_and_rho(monkeypatch):
     assert len(diag.history) == 1
     assert diag.history[0].outer_iter == 0
 
+    _, _, summary_diag = pdg_alsolver.al_solve_autodiff(
+        nlgame,
+        op0,
+        al0,
+        discretize_method="euler",
+        ineq_activation="none",
+        max_iters=1,
+        rho_increase=10.0,
+        rho_max=50.0,
+        opt_tol=1e-12,
+        dyn_tol=0.0,
+        ineq_tol=0.0,
+        eq_tol=0.0,
+        newton_max_iters=1,
+        collect_diagnostics=False,
+    )
+
+    assert summary_diag.converged is False
+    assert summary_diag.iters == 1
+    assert summary_diag.reason == "max_outer_iters"
+    assert summary_diag.history == ()
+
 
 def test_al_solve_forwards_structured_jacobian_backend_by_default(monkeypatch):
     tg = TimeGrid(nt=3, dt=0.1, t0=0.0)

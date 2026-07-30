@@ -509,6 +509,7 @@ class ALSolverDiag(SolverDiag):
     reason : str
         Termination reason (e.g. "converged", "max_outer_iters").
     history : tuple[ALSolverOuterIterDiag, ...]
-        Per-outer-iteration diagnostics.
+        Per-outer-iteration diagnostics. Empty when diagnostic collection is
+        disabled for the solve.
     """
     history: Tuple[ALSolverOuterIterDiag, ...]
