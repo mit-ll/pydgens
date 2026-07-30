@@ -106,7 +106,7 @@ def test_solve_ir_unicycle_converge(ir_unicycle):
     # ~~ ACT ~~
 
     # compute nash strategy for nonlinear game
-    conv, nl_traj, nl_strat = solve_ilqgame_feedback(ir_unicycle.game, x0)
+    conv, nl_traj, nl_strat, _ = solve_ilqgame_feedback(ir_unicycle.game, x0)
 
     # ~~ ASSERT ~~
     
@@ -259,7 +259,7 @@ def test_unicycle_solve_approved_outputs_1():
 
     # ~~ ACT & ASSERT ~~
 
-    conv, traj, strat = solve_ilqgame_feedback(
+    conv, traj, strat, _ = solve_ilqgame_feedback(
         nlgame=ir_unicycle.game,
         x0=x0,
         init_traj=init_traj,
@@ -321,7 +321,7 @@ def test_unicycle_solve_cold_perf(benchmark):
         return results
     
     # cold = time.perf_counter() - t0
-    conv, traj, strat = benchmark.pedantic(
+    conv, traj, strat, diagnostics = benchmark.pedantic(
         cold_run,
         iterations=1,       # one timing sample per round
         rounds=1,           # exactly one round → one cold timing
@@ -369,4 +369,3 @@ def test_unicycle_solve_warm_perf(benchmark):
     
     # benchmark the warmstarted solver
     benchmark(run)
-

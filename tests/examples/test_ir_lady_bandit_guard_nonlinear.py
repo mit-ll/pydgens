@@ -786,7 +786,7 @@ def test_solve_ir_lady_bandit_guard_nonlinear_smoketest(lbg1):
     # ~~ ACT ~~
 
     # compute nash strategy for nonlinear game
-    conv, nl_traj, nl_strat = solve_ilqgame_feedback(lbg1.game, x0, init_traj, init_strat)
+    conv, nl_traj, nl_strat, _ = solve_ilqgame_feedback(lbg1.game, x0, init_traj, init_strat)
 
     # ~~ ASSERT ~~
     

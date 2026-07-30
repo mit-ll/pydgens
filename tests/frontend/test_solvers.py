@@ -320,7 +320,7 @@ def test_solve_ilq_auto_dispatches(monkeypatch):
     def fake_solve_ilqgame_feedback(nlgame, x0, **kwargs):
         assert nlgame is game
         assert jnp.allclose(x0, jnp.array([2.0]))
-        return False, trajectory, strategy
+        return False, trajectory, strategy, None
 
     monkeypatch.setattr(
         fsolvers,
@@ -352,7 +352,7 @@ def test_solve_ilq_frontend_game_auto_dispatches(monkeypatch):
             fsolvers.NonlinearGameType1,
         )
         assert jnp.allclose(x0, jnp.array([2.0, -1.0]))
-        return True, trajectory, strategy
+        return True, trajectory, strategy, None
 
     monkeypatch.setattr(
         fsolvers,
@@ -382,7 +382,7 @@ def test_solve_ilq_collects_opt_in_diagnostics(monkeypatch):
 
     def fake_solve_ilqgame_feedback(nlgame, x0, **kwargs):
         assert nlgame is game
-        assert kwargs["return_diagnostics"] is True
+        assert kwargs["collect_diagnostics"] is True
         return False, "trajectory", "strategy", diagnostics
 
     monkeypatch.setattr(
@@ -447,7 +447,7 @@ def test_solve_al_frontend_game_auto_dispatches(monkeypatch):
         captured["op0"] = op0
         captured["alstate0"] = alstate0
         captured["collect_diagnostics"] = kwargs["collect_diagnostics"]
-        return "pdtraj", "alstate", diagnostics
+        return True, "pdtraj", "alstate", diagnostics
 
     monkeypatch.setattr(
         fsolvers,
@@ -514,7 +514,7 @@ def test_solve_al_auto_dispatches_with_default_initialization(monkeypatch):
         captured["op0"] = op0
         captured["alstate0"] = alstate0
         captured["collect_diagnostics"] = kwargs["collect_diagnostics"]
-        return "pdtraj", "alstate", "diag"
+        return False, "pdtraj", "alstate", "diag"
 
     monkeypatch.setattr(
         fsolvers,
@@ -536,7 +536,7 @@ def test_solve_al_auto_dispatches_with_default_initialization(monkeypatch):
     )
 
     assert result.method == "al"
-    assert result.converged is None
+    assert result.converged is False
     assert result.primal_dual_trajectory == "pdtraj"
     assert result.al_state == "alstate"
     assert result.diagnostics == "diag"
@@ -615,7 +615,7 @@ def test_solve_al_zero_step_default_initialization(monkeypatch):
         captured["game"] = nlgame
         captured["op0"] = op0
         captured["alstate0"] = alstate0
-        return "pdtraj", "alstate", "diag"
+        return False, "pdtraj", "alstate", "diag"
 
     monkeypatch.setattr(
         fsolvers,

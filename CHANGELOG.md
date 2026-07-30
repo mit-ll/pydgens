@@ -7,9 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [UNRELEASED] - XXXX.XX.XX
 
-- `ilqsolver.py` and `alsolver.py` opt-in per-iteration diagnostics, exposed
-  through `pdg.solve(..., collect_diagnostics=True)` without retaining
-  diagnostic history on the normal frontend solve path.
+- `ilqsolver.py` and `alsolver.py` now use fixed solver return tuples with
+  convergence first and diagnostics last. Per-iteration diagnostics remain. Note that this is technically backward-incompatible for the backend solvers but keeps the same frontend API, thus this is not a major version revision
+  opt-in through `pdg.solve(..., collect_diagnostics=True)`.
 - `diagnostictypes.py` shared iterative-solver termination contract used by
   iLQ and AL diagnostics.
 

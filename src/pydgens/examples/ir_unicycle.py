@@ -180,8 +180,8 @@ def main() -> None:
     # Unlike the frontend ``pdg.solve(...)`` wrapper, the low-level solver
     # returns the raw solver tuple:
     #
-    #   converged, trajectory, strategy
-    converged, trajectory, strategy = solve_ilqgame_feedback(
+    #   converged, trajectory, strategy, diagnostics
+    converged, trajectory, strategy, diagnostics = solve_ilqgame_feedback(
         unicycle.game,
         x0,
     )

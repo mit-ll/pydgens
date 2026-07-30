@@ -1240,7 +1240,7 @@ def solve_example():
         strategy=init_strat,
     )
 
-    converged, trajectory, strategy = solve_ilqgame_feedback(
+    converged, trajectory, strategy, diagnostics = solve_ilqgame_feedback(
         lbg.game,
         DEFAULT_INITIAL_STATE,
         init_traj=init_traj,

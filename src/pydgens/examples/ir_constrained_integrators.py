@@ -213,7 +213,7 @@ def solve_example():
     )
 
     # Step 7: solve with the augmented-Lagrangian solver.
-    op_out, al_out, diag = alsolver.al_solve_autodiff(
+    converged, op_out, al_out, diag = alsolver.al_solve_autodiff(
         nlgame,
         op0,
         alstate0,

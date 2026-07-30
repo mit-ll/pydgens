@@ -3024,7 +3024,12 @@ def al_solve(
     normkind: ResidualNormKind = "l1_mean",
     jacobian_backend: JacobianBackendKind = "structured",
     collect_diagnostics: bool = True,
-) -> Tuple[trajtypes.FixedStepPrimalDualTrajectory, altypes.JointAugmentedLagrangianState, altypes.ALSolverDiag]:
+) -> Tuple[
+    bool,
+    trajtypes.FixedStepPrimalDualTrajectory,
+    altypes.JointAugmentedLagrangianState,
+    altypes.ALSolverDiag | None,
+]:
     """
     Solve a constrained dynamic game using an Augmented Lagrangian (AL) outer loop with a
     Newton-based inner solve.
@@ -3165,23 +3170,24 @@ def al_solve(
         Merit norm used for line search and recorded diagnostics (e.g. "l1_mean" to match ALGAMES).
 
     collect_diagnostics : bool, default=True
-        Whether to retain the per-outer-iteration diagnostic history.  The
-        final ``ALSolverDiag`` is always returned so callers can inspect the
-        termination status.  Disabling collection avoids constructing the
-        history records and their AL-state scalar summaries.
+        Whether to retain a per-outer-iteration ``ALSolverDiag``. Disabling
+        collection avoids constructing history records and their AL-state
+        scalar summaries.
 
     Returns
     -------
+    converged : bool
+        Whether the outer AL convergence tolerances were satisfied.
+
     op : FixedStepPrimalDualTrajectory
         Final primal-dual trajectory (X,U,μ) returned by the outer loop.
 
     alstate : JointAugmentedLagrangianState
         Final auxiliary-constraint AL state (λ, ρ) after outer iterations.
 
-    diag : ALSolverDiag
-        Solver termination diagnostics. When ``collect_diagnostics=True``,
-        this additionally includes per-outer-iteration history with inner
-        Newton outcomes, feasibility metrics, and λ/ρ summaries.
+    diag : ALSolverDiag or None
+        Per-outer-iteration diagnostics when ``collect_diagnostics=True``;
+        otherwise ``None``.
 
     Notes
     -----
@@ -3331,11 +3337,15 @@ def al_solve(
             (eq_vio <= eq_tol)      and 
             (opt_vio <= opt_tol)
         ):
-            diag = altypes.ALSolverDiag(
-                converged=True,
-                iters=k + 1,
-                reason="converged",
-                history=tuple(hist) if hist is not None else (),
+            diag = (
+                altypes.ALSolverDiag(
+                    converged=True,
+                    iters=k + 1,
+                    reason="converged",
+                    history=tuple(hist),
+                )
+                if hist is not None
+                else None
             )
             if debug_enabled:
                 logger.debug(
@@ -3344,7 +3354,7 @@ def al_solve(
                     k + 1,
                     time.perf_counter() - al_t0,
                 )
-            return op, alstate, diag
+            return True, op, alstate, diag
 
         # ---- 3) Dual ascent update on λ (uses values in canonical order) ----
         alstate = dual_ascent_update(nlgame.constraints, op, alstate, validate_shapes=True)
@@ -3352,29 +3362,38 @@ def al_solve(
         # ---- 4) Increase schedule update on ρ ----
         alstate = rho_increase_schedule(alstate, rho_increase=rho_increase, rho_max=rho_max, validate=True)
 
-    diag = altypes.ALSolverDiag(
-        converged=False,
-        iters=max_iters,
-        reason="max_outer_iters",
-        history=tuple(hist) if hist is not None else (),
+    diag = (
+        altypes.ALSolverDiag(
+            converged=False,
+            iters=max_iters,
+            reason="max_outer_iters",
+            history=tuple(hist),
+        )
+        if hist is not None
+        else None
     )
     if debug_enabled:
         logger.debug(
             "AL outer solve stop call=%d iters=%d reason=%s total_dt=%.3fs",
             al_call_id,
             max_iters,
-            diag.reason,
+            "max_outer_iters",
             time.perf_counter() - al_t0,
         )
-    return op, alstate, diag
+    return False, op, alstate, diag
 
 
 def al_solve_autodiff(
     *args,
     **kwargs,
-) -> Tuple[trajtypes.FixedStepPrimalDualTrajectory, altypes.JointAugmentedLagrangianState, altypes.ALSolverDiag]:
+) -> Tuple[
+    bool,
+    trajtypes.FixedStepPrimalDualTrajectory,
+    altypes.JointAugmentedLagrangianState,
+    altypes.ALSolverDiag | None,
+]:
     """
-    Backward-compatible alias for `al_solve`.
+    Alias for `al_solve`.
 
     The preferred function name no longer encodes a Jacobian backend. The structured
     backend is now the default; pass `jacobian_backend="autodiff"` to elect the

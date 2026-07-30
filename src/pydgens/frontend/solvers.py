@@ -387,17 +387,12 @@ def _solve_ilq_frontend(
     else:
         nlgame = game
 
-    result = solve_ilqgame_feedback(
+    converged, trajectory, strategy, diagnostics = solve_ilqgame_feedback(
         nlgame,
         x0=jnp.asarray(x0),
-        return_diagnostics=collect_diagnostics,
+        collect_diagnostics=collect_diagnostics,
         **solver_kwargs,
     )
-    if collect_diagnostics:
-        converged, trajectory, strategy, diagnostics = result
-    else:
-        converged, trajectory, strategy = result
-        diagnostics = None
 
     return SolveResult(
         method="ilq",
@@ -405,7 +400,7 @@ def _solve_ilq_frontend(
         strategy=strategy,
         trajectory=trajectory,
         diagnostics=diagnostics,
-        raw=result,
+        raw=(converged, trajectory, strategy, diagnostics),
     )
 
 
@@ -446,7 +441,7 @@ def _solve_al_frontend(
             nc_eq=game.constraints.nc_eq,
         )
 
-    primal_dual_trajectory, al_state, diagnostics = al_solve_autodiff(
+    converged, primal_dual_trajectory, al_state, diagnostics = al_solve_autodiff(
         game,
         op0,
         al_state0,
@@ -456,15 +451,11 @@ def _solve_al_frontend(
 
     return SolveResult(
         method="al",
-        converged=(
-            bool(diagnostics.converged)
-            if hasattr(diagnostics, "converged")
-            else None
-        ),
+        converged=bool(converged),
         primal_dual_trajectory=primal_dual_trajectory,
         al_state=al_state,
         diagnostics=diagnostics,
-        raw=(primal_dual_trajectory, al_state, diagnostics),
+        raw=(converged, primal_dual_trajectory, al_state, diagnostics),
     )
 
 

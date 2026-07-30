@@ -5695,7 +5695,7 @@ def test_al_solve_autodiff_outer_updates_lambda_and_rho(monkeypatch):
     )
 
     # ---- Run outer loop for exactly 1 iteration ----
-    op_out, al_out, diag = pdg_alsolver.al_solve_autodiff(
+    converged, op_out, al_out, diag = pdg_alsolver.al_solve_autodiff(
         nlgame,
         op0,
         al0,
@@ -5739,7 +5739,7 @@ def test_al_solve_autodiff_outer_updates_lambda_and_rho(monkeypatch):
     assert len(diag.history) == 1
     assert diag.history[0].outer_iter == 0
 
-    _, _, summary_diag = pdg_alsolver.al_solve_autodiff(
+    _, _, _, summary_diag = pdg_alsolver.al_solve_autodiff(
         nlgame,
         op0,
         al0,
@@ -5756,10 +5756,7 @@ def test_al_solve_autodiff_outer_updates_lambda_and_rho(monkeypatch):
         collect_diagnostics=False,
     )
 
-    assert summary_diag.converged is False
-    assert summary_diag.iters == 1
-    assert summary_diag.reason == "max_outer_iters"
-    assert summary_diag.history == ()
+    assert summary_diag is None
 
 
 def test_al_solve_forwards_structured_jacobian_backend_by_default(monkeypatch):
@@ -5795,7 +5792,7 @@ def test_al_solve_forwards_structured_jacobian_backend_by_default(monkeypatch):
 
     monkeypatch.setattr(pdg_alsolver, "newton_solve_stationarity", fake_newton_solve)
 
-    op_out, al_out, diag = pdg_alsolver.al_solve(
+    converged, op_out, al_out, diag = pdg_alsolver.al_solve(
         nlgame,
         op0,
         al0,
@@ -5816,7 +5813,7 @@ def test_al_solve_forwards_structured_jacobian_backend_by_default(monkeypatch):
 
 
 def test_al_solve_autodiff_delegates_to_al_solve(monkeypatch):
-    expected = ("OP_OUT", "AL_OUT", "DIAG")
+    expected = (False, "OP_OUT", "AL_OUT", "DIAG")
     seen = {"args": None, "kwargs": None}
 
     def fake_al_solve(*args, **kwargs):
@@ -5869,7 +5866,7 @@ def test_al_solve_autodiff_rho_caps(monkeypatch):
                         lambda constraints, op: (ineq_lins, ()))
 
     # 3 outer iterations: rho: 2 -> 10 -> 10 -> 10 (cap at 10)
-    op_out, al_out, diag = pdg_alsolver.al_solve_autodiff(
+    converged, op_out, al_out, diag = pdg_alsolver.al_solve_autodiff(
         nlgame,
         op0,
         al0,
@@ -5931,7 +5928,7 @@ def test_al_solve_autodiff_converges_early_and_does_not_update_alstate(monkeypat
     monkeypatch.setattr(pdg_alsolver.contypes, "build_constraint_step_linearizations", lambda *_: (ineq_lins, eq_lins))
 
     # With tight tolerances, should exit at k=0 before updating alstate
-    op_out, al_out, diag = pdg_alsolver.al_solve_autodiff(
+    converged, op_out, al_out, diag = pdg_alsolver.al_solve_autodiff(
         nlgame, op0, al0,
         discretize_method="euler",
         ineq_activation="none",
@@ -6001,7 +5998,7 @@ def test_al_solve_autodiff_does_not_converge_if_inner_reports_nonfinite_dyn(monk
     # empty constraints
     monkeypatch.setattr(pdg_alsolver.contypes, "build_constraint_step_linearizations", lambda *a, **k: ((), ()))
 
-    op_out, al_out, diag = pdg_alsolver.al_solve_autodiff(
+    converged, op_out, al_out, diag = pdg_alsolver.al_solve_autodiff(
         nlgame, op0, al0,
         discretize_method="euler",
         ineq_activation="none",
@@ -6087,7 +6084,7 @@ def test_al_solve_autodiff_nonmock_no_constraints_reduces_residual():
     assert g0_norm > 0.0
 
     # ---- run outer AL solve (few outer iters; no constraints so λ/ρ won't matter) ----
-    op_out, al_out, diag = pdg_alsolver.al_solve_autodiff(
+    converged, op_out, al_out, diag = pdg_alsolver.al_solve_autodiff(
         nlgame, op0, al0,
         discretize_method="euler",
         ineq_activation="none",
@@ -6206,7 +6203,7 @@ def test_al_solve_autodiff_always_violated_ineq_updates_lambda_and_rho():
     rho_max = 50.0
     outer_iters = 3
 
-    op_out, al_out, diag = pdg_alsolver.al_solve_autodiff(
+    converged, op_out, al_out, diag = pdg_alsolver.al_solve_autodiff(
         nlgame, op0, al0,
         discretize_method="euler",
         ineq_activation="none",   # doesn't matter here
@@ -6380,7 +6377,7 @@ def notest_al_vs_lqgame_unconstrained_2player_running_cost_only():
     op0 = FixedStepPrimalDualTrajectory(tg=tg, xs=xs0, us=us0, ls=ls0)
 
     # ----- run AL outer loop (no constraints => outer loop largely irrelevant) -----
-    op_out, al_out, diag = pdg_alsolver.al_solve_autodiff(
+    converged, op_out, al_out, diag = pdg_alsolver.al_solve_autodiff(
         nlgame,
         op0,
         alstate0,
@@ -6644,7 +6641,7 @@ def test_al_solve_autodiff_one_step_box_constrained_quadratic_clips_to_bound():
     op0 = FixedStepPrimalDualTrajectory(tg=tg, xs=xs0, us=us0, ls=ls0)
 
     # ---- solve ----
-    op_out, al_out, diag = pdg_alsolver.al_solve_autodiff(
+    converged, op_out, al_out, diag = pdg_alsolver.al_solve_autodiff(
         nlgame,
         op0,
         alstate0,
@@ -6803,7 +6800,7 @@ def test_al_solve_autodiff_two_player_mixed_constraints_converges_and_satisfies_
     op0 = FixedStepPrimalDualTrajectory(tg=tg, xs=xs0, us=us0, ls=ls0)
 
     # ---- solve ----
-    op_out, al_out, diag = pdg_alsolver.al_solve_autodiff(
+    converged, op_out, al_out, diag = pdg_alsolver.al_solve_autodiff(
         nlgame,
         op0,
         alstate0,

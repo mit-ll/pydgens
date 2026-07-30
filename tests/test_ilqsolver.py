@@ -701,7 +701,7 @@ def test_solve_ilqgame_feedback_lq_converge(arbitrary_time_varying_lqgame):
     # ~~ ACT ~~
 
     # compute nash strategy for nonlinear game
-    conv, nl_traj, nl_strat = solve_ilqgame_feedback(nlgame, x0, init_strat=init_strat, backtrack_max_iters=20)
+    conv, nl_traj, nl_strat, _ = solve_ilqgame_feedback(nlgame, x0, init_strat=init_strat, backtrack_max_iters=20)
 
     # ~~ ASSERT ~~
 
@@ -735,7 +735,7 @@ def test_solve_ilqgame_feedback_zero_step_game():
         u_splits=jnp.array([1, 1]),
     )
 
-    converged, traj, strat = solve_ilqgame_feedback(
+    converged, traj, strat, diagnostics = solve_ilqgame_feedback(
         nlgame=nlgame,
         x0=x0,
         max_iters=3,
@@ -748,6 +748,7 @@ def test_solve_ilqgame_feedback_zero_step_game():
     assert strat.P.shape == (0, nu, nx)
     assert strat.alpha.shape == (0, nu)
     assert jnp.allclose(traj.xs[0], x0)
+    assert diagnostics is None
 
 
 def test_solve_ilqgame_feedback_returns_opt_in_diagnostics_for_zero_step_game():
@@ -769,7 +770,7 @@ def test_solve_ilqgame_feedback_returns_opt_in_diagnostics_for_zero_step_game():
     converged, _, _, diagnostics = solve_ilqgame_feedback(
         nlgame=nlgame,
         x0=jnp.array([2.0]),
-        return_diagnostics=True,
+        collect_diagnostics=True,
     )
 
     assert converged is True
@@ -801,7 +802,7 @@ def test_solve_ilqgame_feedback_terminal_target_moves_one_stage_state():
         u_splits=jnp.array([1], dtype=jnp.int32),
     )
 
-    converged, trajectory, strategy = solve_ilqgame_feedback(
+    converged, trajectory, strategy, _ = solve_ilqgame_feedback(
         nlgame=nlgame,
         x0=jnp.array([0.0]),
         max_iters=20,

@@ -196,11 +196,13 @@ def solve_ilqgame_feedback(
     backtrack_scale_step: float = 0.5,
     backtrack_scale_max_diff: float = 30 * 5e-2, # Ref: https://github.com/JuliaGameTheoreticPlanning/iLQGames.jl/blob/v0.2.7/src/ilq_solver.jl#L20
     logger = None,
-    return_diagnostics: bool = False,
-) -> (
-    Tuple[bool, FixedStepSystemTrajectory, FixedStepAffineStrategies]
-    | Tuple[bool, FixedStepSystemTrajectory, FixedStepAffineStrategies, ILQSolverDiag]
-):
+    collect_diagnostics: bool = False,
+) -> Tuple[
+    bool,
+    FixedStepSystemTrajectory,
+    FixedStepAffineStrategies,
+    ILQSolverDiag | None,
+]:
     """
     Solve a nonlinear dynamic game using iterative linear-quadratic (iLQ) feedback Nash strategy.
 
@@ -242,10 +244,10 @@ def solve_ilqgame_feedback(
         maximum infnorm of trajectories allowed during backtrack scaling
     - logger : Logger
         logger object to manage logs of solver
-    - return_diagnostics : bool, optional
-        When true, append an :class:`ILQSolverDiag` to the legacy return
-        tuple. It is disabled by default so the normal iLQ path does not
-        materialize per-iteration scalar metrics or retain history.
+    - collect_diagnostics : bool, optional
+        Whether to retain an :class:`ILQSolverDiag`. It is disabled by
+        default so the normal iLQ path does not materialize per-iteration
+        scalar metrics or retain history.
 
     Returns
     -------
@@ -255,6 +257,9 @@ def solve_ilqgame_feedback(
         Operating point of local feedback Nash equilibrium, similar to tha open-loop equilibrium
     strategy : FixedStepAffineStrategies
         Converged feedback strategy that approximates a local Nash equilibrium of the nonlinear game.
+    diagnostics : ILQSolverDiag or None
+        Per-iteration diagnostics when ``collect_diagnostics=True``;
+        otherwise ``None``.
 
     Notes
     -----
@@ -266,7 +271,7 @@ def solve_ilqgame_feedback(
 
     logger = logger or logging.getLogger(__name__)
     debug_enabled = logger.isEnabledFor(logging.DEBUG)
-    history: list[ILQSolverIterDiag] | None = [] if return_diagnostics else None
+    history: list[ILQSolverIterDiag] | None = [] if collect_diagnostics else None
 
     if init_traj is None:
         init_traj = FixedStepSystemTrajectory(
@@ -324,9 +329,9 @@ def solve_ilqgame_feedback(
             alpha_scale_init=backtrack_scale_init,
             alpha_scale_step=backtrack_scale_step,
             max_elwise_diff=backtrack_scale_max_diff,
-            return_info=return_diagnostics,
+            return_info=collect_diagnostics,
         )
-        if return_diagnostics:
+        if collect_diagnostics:
             curr_strat, curr_traj, success, (backtrack_iters, accepted_alpha) = backtrack_result
             delta_inf = float(jnp.max(jnp.abs(curr_traj.xs - prev_traj.xs)))
             assert history is not None
@@ -343,26 +348,35 @@ def solve_ilqgame_feedback(
 
         if not success:
             logger.warning("iLQ backtracking failed at iteration %d; exiting early.", iteration)
-            if return_diagnostics:
-                return False, curr_traj, curr_strat, ILQSolverDiag(
+            diagnostics = (
+                ILQSolverDiag(
                     converged=False, iters=iteration + 1,
                     reason="backtracking_failed", history=tuple(history),
                 )
-            return False, curr_traj, curr_strat
+                if history is not None
+                else None
+            )
+            return False, curr_traj, curr_strat, diagnostics
 
         # Step 6: Check for convergence
         if are_xs_close(curr_traj, traj2=prev_traj, max_elwise_diff=converged_max_diff):
             logger.info("iLQ converged at iteration %d.", iteration)
-            if return_diagnostics:
-                return True, curr_traj, curr_strat, ILQSolverDiag(
+            diagnostics = (
+                ILQSolverDiag(
                     converged=True, iters=iteration + 1,
                     reason="converged", history=tuple(history),
                 )
-            return True, curr_traj, curr_strat
+                if history is not None
+                else None
+            )
+            return True, curr_traj, curr_strat, diagnostics
 
     logger.warning("iLQ reached max iterations without convergence.")
-    if return_diagnostics:
-        return False, curr_traj, curr_strat, ILQSolverDiag(
+    diagnostics = (
+        ILQSolverDiag(
             converged=False, iters=max_iters, reason="max_iters", history=tuple(history),
         )
-    return False, curr_traj, curr_strat
+        if history is not None
+        else None
+    )
+    return False, curr_traj, curr_strat, diagnostics

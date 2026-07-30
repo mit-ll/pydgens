@@ -290,7 +290,7 @@ def solve_diagnostic_example(*, debug_logging: bool = False):
     else:
         logging.basicConfig(level=logging.INFO, force=True)
 
-    op_out, al_out, diag = alsolver.al_solve_autodiff(
+    converged, op_out, al_out, diag = alsolver.al_solve_autodiff(
         nlgame,
         op0,
         alstate0,

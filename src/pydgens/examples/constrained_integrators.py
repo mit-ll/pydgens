@@ -225,6 +225,7 @@ def main() -> None:
         game,
         x0=x0,
         method="al",
+        collect_diagnostics=True
     )
 
     # -----------------------------------------------------------------
