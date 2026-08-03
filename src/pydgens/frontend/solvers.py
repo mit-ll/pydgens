@@ -212,8 +212,8 @@ def solve(
     diagnostics_level:
         Requested iterative-solver diagnostics collection level. ``"off"``
         avoids retained diagnostics, ``"basic"`` collects lightweight
-        iteration records, and ``"detailed"`` reserves room for future
-        compute-heavy metrics.
+        iteration records, and ``"detailed"`` additionally collects
+        solver-specific compute-heavy model-agreement metrics where supported.
 
     **solver_kwargs:
         Additional keyword arguments forwarded to the selected low-level

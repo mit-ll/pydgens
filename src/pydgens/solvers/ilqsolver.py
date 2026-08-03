@@ -24,15 +24,52 @@ from pydgens.ir.trajectorytypes import (
     _as_xs_tolerance,
     are_xs_close,
 )
+from pydgens.ir.timetypes import compute_ts
 from pydgens.ir.strategytypes import FixedStepAffineStrategies
 from pydgens.ir.systemtypes import propagate_system_trajectory
-from pydgens.ir.gametypes import NonlinearGameType1, approx_linear_quadratic_game
+from pydgens.ir.gametypes import (
+    LinearQuadraticGameType1,
+    NonlinearGameType1,
+    approx_linear_quadratic_game,
+)
 from pydgens.ir.diagnostictypes import (
     DiagnosticsLevel,
     SolverDiag,
     validate_diagnostics_level,
 )
 from pydgens.solvers.lqsolver import solve_lqgame_feedback
+
+
+@dataclass(frozen=True)
+class ILQModelAgreementDiag:
+    """Per-player agreement between an iLQ quadratic model and rollout.
+
+    Attributes
+    ----------
+    nonlinear_cost_before
+        Per-player nonlinear trajectory costs at the operating trajectory used
+        to construct the local LQ game.
+    nonlinear_cost_after
+        Per-player nonlinear trajectory costs after the selected backtracking
+        rollout.
+    nonlinear_cost_change
+        Per-player nonlinear cost changes, equal to ``after - before``.
+    lq_predicted_cost_change
+        Per-player cost changes predicted by the LQ approximation evaluated at
+        the selected state and control update. The zero-update LQ baseline is
+        zero because the local model omits constant cost terms.
+    cost_reduction_ratio
+        Per-player ratio of actual to LQ-predicted cost reduction:
+        ``(before - after) / (-lq_predicted_cost_change)``. ``None`` when the
+        LQ model does not predict a strictly positive reduction, since a ratio
+        would not be an interpretable agreement measure in that case.
+    """
+
+    nonlinear_cost_before: Tuple[float, ...]
+    nonlinear_cost_after: Tuple[float, ...]
+    nonlinear_cost_change: Tuple[float, ...]
+    lq_predicted_cost_change: Tuple[float, ...]
+    cost_reduction_ratio: Tuple[float | None, ...]
 
 
 @dataclass(frozen=True)
@@ -64,6 +101,9 @@ class ILQSolverIterDiag:
         no candidate passed the backtracking check.
     backtracking_succeeded
         Whether the backtracking rollout satisfied its state-deviation bound.
+    model_agreement
+        Per-player nonlinear-versus-LQ cost comparison collected only at
+        ``diagnostics_level="detailed"``; otherwise ``None``.
     """
 
     iteration: int
@@ -74,6 +114,7 @@ class ILQSolverIterDiag:
     backtrack_iters: int
     accepted_alpha_scale: float | None
     backtracking_succeeded: bool
+    model_agreement: ILQModelAgreementDiag | None
 
 
 @dataclass(frozen=True)
@@ -289,8 +330,9 @@ def solve_ilqgame_feedback(
         logger object to manage logs of solver
     - diagnostics_level : {"off", "basic", "detailed"}, optional
         Collection level for :class:`ILQSolverDiag`. ``"basic"`` retains
-        lightweight per-iteration records; ``"detailed"`` currently has the
-        same fields and reserves room for future expensive metrics.
+        lightweight per-iteration records. ``"detailed"`` additionally
+        evaluates per-player nonlinear costs and compares their changes with
+        the local LQ model's predicted changes.
 
     Returns
     -------
@@ -315,8 +357,10 @@ def solve_ilqgame_feedback(
 
     logger = logger or logging.getLogger(__name__)
     diagnostics_level = validate_diagnostics_level(diagnostics_level)
+    collect_basic_diagnostics = diagnostics_level != "off"
+    collect_detailed_diagnostics = diagnostics_level == "detailed"
     history: list[ILQSolverIterDiag] | None = (
-        [] if diagnostics_level != "off" else None
+        [] if collect_basic_diagnostics else None
     )
 
     if init_traj is None:
@@ -341,6 +385,11 @@ def solve_ilqgame_feedback(
         nlgame.cs,
         x0 = x0,
         strategy = curr_strat
+    )
+    nonlinear_costs = (
+        _nonlinear_player_costs(nlgame, curr_traj)
+        if collect_detailed_diagnostics
+        else None
     )
 
     for iteration in range(max_iters):
@@ -371,9 +420,9 @@ def solve_ilqgame_feedback(
             alpha_scale_init=backtrack_scale_init,
             alpha_scale_step=backtrack_scale_step,
             max_elwise_diff=backtrack_scale_max_diff,
-            return_info=history is not None,
+            return_info=collect_basic_diagnostics,
         )
-        if history is not None:
+        if collect_basic_diagnostics:
             curr_strat, curr_traj, success, (backtrack_iters, accepted_alpha) = backtrack_result
             (
                 state_update_inf,
@@ -383,6 +432,18 @@ def solve_ilqgame_feedback(
             ) = _state_update_metrics(
                 curr_traj, prev_traj, converged_max_diff
             )
+            model_agreement = None
+            if collect_detailed_diagnostics:
+                assert nonlinear_costs is not None
+                new_nonlinear_costs = _nonlinear_player_costs(nlgame, curr_traj)
+                model_agreement = _model_agreement_diagnostics(
+                    nonlinear_costs,
+                    new_nonlinear_costs,
+                    lq_game_del,
+                    curr_traj,
+                    prev_traj,
+                )
+                nonlinear_costs = new_nonlinear_costs
             assert history is not None
             iteration_diag = ILQSolverIterDiag(
                 iteration=iteration,
@@ -393,6 +454,7 @@ def solve_ilqgame_feedback(
                 backtrack_iters=backtrack_iters,
                 accepted_alpha_scale=accepted_alpha,
                 backtracking_succeeded=bool(success),
+                model_agreement=model_agreement,
             )
             history.append(iteration_diag)
             _log_ilq_iteration(logger, iteration_diag)
@@ -404,7 +466,7 @@ def solve_ilqgame_feedback(
                     converged=False, iters=iteration + 1,
                     reason="backtracking_failed", history=tuple(history),
                 )
-                if history is not None
+                if collect_basic_diagnostics
                 else None
             )
             _log_ilq_result(logger, diagnostics)
@@ -417,7 +479,7 @@ def solve_ilqgame_feedback(
                     converged=True, iters=iteration + 1,
                     reason="converged", history=tuple(history),
                 )
-                if history is not None
+                if collect_basic_diagnostics
                 else None
             )
             _log_ilq_result(logger, diagnostics)
@@ -427,7 +489,7 @@ def solve_ilqgame_feedback(
         ILQSolverDiag(
             converged=False, iters=max_iters, reason="max_iters", history=tuple(history),
         )
-        if history is not None
+        if collect_basic_diagnostics
         else None
     )
     _log_ilq_result(logger, diagnostics)
@@ -437,10 +499,12 @@ def solve_ilqgame_feedback(
 def _log_ilq_iteration(logger, diag: ILQSolverIterDiag) -> None:
     """Render an iLQ iteration diagnostic without recomputing solver metrics."""
     if logger.isEnabledFor(logging.DEBUG):
-        logger.debug(
+        message = (
             "iLQ iter=%d alpha=%s backtrack_iters=%d success=%s "
             "state_update_inf=%.6g state_update_ratio_inf=%.6g "
-            "state_update_worst=(%d, %d)",
+            "state_update_worst=(%d, %d)"
+        )
+        values = (
             diag.iteration,
             diag.accepted_alpha_scale,
             diag.backtrack_iters,
@@ -450,6 +514,17 @@ def _log_ilq_iteration(logger, diag: ILQSolverIterDiag) -> None:
             diag.state_update_worst_time_node,
             diag.state_update_worst_index,
         )
+        if diag.model_agreement is not None:
+            message += (
+                " nonlinear_cost_change=%s lq_predicted_cost_change=%s "
+                "cost_reduction_ratio=%s"
+            )
+            values += (
+                diag.model_agreement.nonlinear_cost_change,
+                diag.model_agreement.lq_predicted_cost_change,
+                diag.model_agreement.cost_reduction_ratio,
+            )
+        logger.debug(message, *values)
 
 
 def _state_update_metrics(
@@ -477,6 +552,90 @@ def _state_update_metrics(
         float(jnp.max(update_ratio)),
         worst_time_node,
         worst_state_index,
+    )
+
+
+def _nonlinear_player_costs(
+    nlgame: NonlinearGameType1, trajectory: FixedStepSystemTrajectory
+) -> Tuple[float, ...]:
+    """Evaluate the iLQ running-plus-terminal cost for each player."""
+    ts = compute_ts(trajectory.tg)
+    costs = []
+    for player_cost in nlgame.costs:
+        running_cost = sum(
+            player_cost.running(ts[k], trajectory.xs[k], trajectory.us[k])
+            for k in range(trajectory.nsteps)
+        )
+        terminal_cost = (
+            player_cost.terminal(ts[-1], trajectory.xs[-1])
+            if player_cost.terminal is not None
+            else 0.0
+        )
+        costs.append(float(running_cost + terminal_cost))
+    return tuple(costs)
+
+
+def _lq_predicted_player_cost_changes(
+    lq_game: LinearQuadraticGameType1,
+    current: FixedStepSystemTrajectory,
+    previous: FixedStepSystemTrajectory,
+) -> Tuple[float, ...]:
+    """Evaluate local LQ cost changes for a selected trajectory update."""
+    state_update = current.xs - previous.xs
+    control_update = current.us - previous.us
+    running_state_change = (
+        0.5 * jnp.einsum(
+            "ki,kpij,kj->p", state_update[:-1], lq_game.Q, state_update[:-1]
+        )
+        + jnp.einsum("kpi,ki->p", lq_game.q, state_update[:-1])
+    )
+    running_control_change = (
+        0.5 * jnp.einsum(
+            "ki,kpij,kj->p", control_update, lq_game.R, control_update
+        )
+        + jnp.einsum("kpi,ki->p", lq_game.r, control_update)
+    )
+    terminal_change = (
+        0.5 * jnp.einsum(
+            "i,pij,j->p", state_update[-1], lq_game.Qf, state_update[-1]
+        )
+        + jnp.einsum("pi,i->p", lq_game.qf, state_update[-1])
+    )
+    return tuple(
+        float(cost)
+        for cost in running_state_change + running_control_change + terminal_change
+    )
+
+
+def _model_agreement_diagnostics(
+    nonlinear_cost_before: Tuple[float, ...],
+    nonlinear_cost_after: Tuple[float, ...],
+    lq_game: LinearQuadraticGameType1,
+    current: FixedStepSystemTrajectory,
+    previous: FixedStepSystemTrajectory,
+) -> ILQModelAgreementDiag:
+    """Compare per-player nonlinear rollout and local LQ cost changes."""
+    predicted_change = _lq_predicted_player_cost_changes(
+        lq_game, current, previous
+    )
+    nonlinear_change = tuple(
+        after - before
+        for before, after in zip(nonlinear_cost_before, nonlinear_cost_after)
+    )
+    reduction_ratio = tuple(
+        (before - after) / -predicted
+        if predicted < 0.0
+        else None
+        for before, after, predicted in zip(
+            nonlinear_cost_before, nonlinear_cost_after, predicted_change
+        )
+    )
+    return ILQModelAgreementDiag(
+        nonlinear_cost_before=nonlinear_cost_before,
+        nonlinear_cost_after=nonlinear_cost_after,
+        nonlinear_cost_change=nonlinear_change,
+        lq_predicted_cost_change=predicted_change,
+        cost_reduction_ratio=reduction_ratio,
     )
 
 

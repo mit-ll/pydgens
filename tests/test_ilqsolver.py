@@ -785,6 +785,37 @@ def test_solve_ilqgame_feedback_returns_opt_in_diagnostics_for_zero_step_game():
     assert diagnostics.history[0].state_update_worst_index == 0
     assert diagnostics.history[0].backtracking_succeeded is True
     assert diagnostics.history[0].accepted_alpha_scale == 0.5
+    assert diagnostics.history[0].model_agreement is None
+
+
+def test_solve_ilqgame_feedback_detailed_diagnostics_handle_zero_update():
+    tg = TimeGrid(nt=1, dt=0.1)
+    cs = SampledContinuousSystemType1(
+        tg=tg,
+        nx=1,
+        nu=1,
+        dynamics=lambda t, x, u: jnp.zeros_like(x),
+    )
+    nlgame = NonlinearGameType1(
+        cs=cs,
+        N=1,
+        costs=[PlayerCostSpecContinuous(running=lambda t, x, u: 0.0)],
+        u_splits=jnp.array([1]),
+    )
+
+    _, _, _, diagnostics = solve_ilqgame_feedback(
+        nlgame=nlgame,
+        x0=jnp.array([2.0]),
+        diagnostics_level="detailed",
+    )
+
+    model_agreement = diagnostics.history[0].model_agreement
+    assert model_agreement is not None
+    assert model_agreement.nonlinear_cost_before == (0.0,)
+    assert model_agreement.nonlinear_cost_after == (0.0,)
+    assert model_agreement.nonlinear_cost_change == (0.0,)
+    assert model_agreement.lq_predicted_cost_change == (0.0,)
+    assert model_agreement.cost_reduction_ratio == (None,)
 
 
 def test_state_update_metrics_are_componentwise_normalized():
@@ -830,7 +861,7 @@ def test_solve_ilqgame_feedback_terminal_target_moves_one_stage_state():
         u_splits=jnp.array([1], dtype=jnp.int32),
     )
 
-    converged, trajectory, strategy, _ = solve_ilqgame_feedback(
+    converged, trajectory, strategy, diagnostics = solve_ilqgame_feedback(
         nlgame=nlgame,
         x0=jnp.array([0.0]),
         max_iters=20,
@@ -838,12 +869,15 @@ def test_solve_ilqgame_feedback_terminal_target_moves_one_stage_state():
         backtrack_max_iters=10,
         backtrack_scale_init=1.0,
         backtrack_scale_max_diff=10.0,
+        diagnostics_level="detailed",
     )
 
     assert converged
     assert jnp.abs(strategy.alpha[0, 0]) > 1e-5
     assert trajectory.us[0, 0] > 0.0
     assert 0.0 < trajectory.xs[-1, 0] < target
+    assert all(diag.model_agreement is not None for diag in diagnostics.history)
+    assert diagnostics.history[0].model_agreement.cost_reduction_ratio[0] == pytest.approx(1.0)
 
 # def test_solve_ilqgame_feedback_lq(arbitrary_time_varying_lqgame):
 #     # Run the iterative linear-quadratic solver on a game that is actually linear-quadratic
