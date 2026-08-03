@@ -14,6 +14,7 @@
 import logging
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from dataclasses import dataclass
 from typing import Tuple
@@ -81,6 +82,7 @@ def backtrack_scale_strategy(
     alpha_scale_step: float,
     max_elwise_diff: float,
     return_info: bool = False,
+    logger = None,
 ) -> (
     tuple[FixedStepAffineStrategies, FixedStepSystemTrajectory, bool]
     | tuple[
@@ -168,6 +170,24 @@ def backtrack_scale_strategy(
             x0 = op.xs[0],
             strategy = new_strat
         )
+
+        if logger and logger.isEnabledFor(logging.DEBUG):
+            delta = new_op.xs - op.xs
+            abs_delta = jnp.abs(delta)
+            flat_index = int(jnp.argmax(abs_delta))
+            time_index, state_index = np.unravel_index(
+                flat_index,
+                abs_delta.shape,
+            )
+            logger.debug(
+                "iLQ backtrack attempt=%d scale=%.6g delta_inf=%.6g "
+                "max_delta_at=(k=%d, state=%d)",
+                i + 1,
+                scale,
+                float(abs_delta[time_index, state_index]),
+                time_index,
+                state_index,
+            )
 
         # check for nearnest to original operating point
         if are_xs_close(op, 
@@ -330,6 +350,7 @@ def solve_ilqgame_feedback(
             alpha_scale_step=backtrack_scale_step,
             max_elwise_diff=backtrack_scale_max_diff,
             return_info=collect_diagnostics,
+            logger=logger,
         )
         if collect_diagnostics:
             curr_strat, curr_traj, success, (backtrack_iters, accepted_alpha) = backtrack_result
