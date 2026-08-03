@@ -37,6 +37,9 @@ Iterative solvers accept `diagnostics_level="off"`, `"basic"`, or
 `"detailed"`. This controls retained diagnostics rather than logger
 configuration: solver loggers emit compact renderings of retained records only
 when the caller has independently enabled the corresponding logging level.
+For iLQ, each basic iteration record includes the raw state-update infinity
+norm, its componentwise convergence-tolerance-normalized infinity norm, and
+the numeric time-node and state-index location of that normalized maximum.
 
 Used by:
 

@@ -27,6 +27,7 @@ from pydgens.ir.costtypes import (
 )
 from pydgens.solvers.lqsolver import solve_lqgame_feedback
 from pydgens.solvers.ilqsolver import (
+    _state_update_metrics,
     scale_strategy,
     backtrack_scale_strategy,
     solve_ilqgame_feedback
@@ -778,8 +779,35 @@ def test_solve_ilqgame_feedback_returns_opt_in_diagnostics_for_zero_step_game():
     assert diagnostics.iters == 1
     assert diagnostics.reason == "converged"
     assert len(diagnostics.history) == 1
+    assert diagnostics.history[0].state_update_inf == pytest.approx(0.0)
+    assert diagnostics.history[0].state_update_ratio_inf == pytest.approx(0.0)
+    assert diagnostics.history[0].state_update_worst_time_node == 0
+    assert diagnostics.history[0].state_update_worst_index == 0
     assert diagnostics.history[0].backtracking_succeeded is True
     assert diagnostics.history[0].accepted_alpha_scale == 0.5
+
+
+def test_state_update_metrics_are_componentwise_normalized():
+    tg = TimeGrid(nt=2, dt=0.1)
+    previous = FixedStepSystemTrajectory(
+        tg=tg,
+        xs=jnp.zeros((2, 2)),
+        us=jnp.zeros((1, 1)),
+    )
+    current = FixedStepSystemTrajectory(
+        tg=tg,
+        xs=jnp.array([[0.4, 0.01], [0.1, 0.03]]),
+        us=jnp.zeros((1, 1)),
+    )
+
+    update_inf, update_ratio_inf, worst_time_node, worst_index = (
+        _state_update_metrics(current, previous, jnp.array([0.5, 0.02]))
+    )
+
+    assert update_inf == pytest.approx(0.4)
+    assert update_ratio_inf == pytest.approx(1.5)
+    assert worst_time_node == 1
+    assert worst_index == 1
 
 
 def test_solve_ilqgame_feedback_terminal_target_moves_one_stage_state():

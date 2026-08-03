@@ -19,7 +19,11 @@ from dataclasses import dataclass
 from typing import Tuple
 from copy import deepcopy
 
-from pydgens.ir.trajectorytypes import FixedStepSystemTrajectory, are_xs_close
+from pydgens.ir.trajectorytypes import (
+    FixedStepSystemTrajectory,
+    _as_xs_tolerance,
+    are_xs_close,
+)
 from pydgens.ir.strategytypes import FixedStepAffineStrategies
 from pydgens.ir.systemtypes import propagate_system_trajectory
 from pydgens.ir.gametypes import NonlinearGameType1, approx_linear_quadratic_game
@@ -33,10 +37,40 @@ from pydgens.solvers.lqsolver import solve_lqgame_feedback
 
 @dataclass(frozen=True)
 class ILQSolverIterDiag:
-    """Compact outcome of one iLQ outer iteration."""
+    """Compact outcome of one iLQ outer iteration.
+
+    Attributes
+    ----------
+    iteration
+        Zero-based outer iLQ iteration number.
+    state_update_inf
+        Infinity norm of the accepted state-trajectory update:
+        ``max(abs(current.xs - previous.xs))``.
+    state_update_ratio_inf
+        Maximum componentwise state update normalized by the corresponding
+        ``converged_max_diff`` tolerance. A value strictly below one passes
+        the componentwise convergence criterion.
+    state_update_worst_time_node
+        Time-node index of the coordinate attaining
+        ``state_update_ratio_inf``. Ties use the first coordinate in
+        row-major trajectory order.
+    state_update_worst_index
+        Joint-state index of the coordinate attaining
+        ``state_update_ratio_inf``.
+    backtrack_iters
+        Number of backtracking rollout attempts made for this iteration.
+    accepted_alpha_scale
+        Feedforward scaling factor accepted by backtracking, or ``None`` if
+        no candidate passed the backtracking check.
+    backtracking_succeeded
+        Whether the backtracking rollout satisfied its state-deviation bound.
+    """
 
     iteration: int
-    trajectory_delta_inf: float
+    state_update_inf: float
+    state_update_ratio_inf: float
+    state_update_worst_time_node: int
+    state_update_worst_index: int
     backtrack_iters: int
     accepted_alpha_scale: float | None
     backtracking_succeeded: bool
@@ -341,11 +375,21 @@ def solve_ilqgame_feedback(
         )
         if history is not None:
             curr_strat, curr_traj, success, (backtrack_iters, accepted_alpha) = backtrack_result
-            delta_inf = float(jnp.max(jnp.abs(curr_traj.xs - prev_traj.xs)))
+            (
+                state_update_inf,
+                state_update_ratio_inf,
+                state_update_worst_time_node,
+                state_update_worst_index,
+            ) = _state_update_metrics(
+                curr_traj, prev_traj, converged_max_diff
+            )
             assert history is not None
             iteration_diag = ILQSolverIterDiag(
                 iteration=iteration,
-                trajectory_delta_inf=delta_inf,
+                state_update_inf=state_update_inf,
+                state_update_ratio_inf=state_update_ratio_inf,
+                state_update_worst_time_node=state_update_worst_time_node,
+                state_update_worst_index=state_update_worst_index,
                 backtrack_iters=backtrack_iters,
                 accepted_alpha_scale=accepted_alpha,
                 backtracking_succeeded=bool(success),
@@ -394,13 +438,46 @@ def _log_ilq_iteration(logger, diag: ILQSolverIterDiag) -> None:
     """Render an iLQ iteration diagnostic without recomputing solver metrics."""
     if logger.isEnabledFor(logging.DEBUG):
         logger.debug(
-            "iLQ iter=%d alpha=%s backtrack_iters=%d success=%s delta_inf=%.6g",
+            "iLQ iter=%d alpha=%s backtrack_iters=%d success=%s "
+            "state_update_inf=%.6g state_update_ratio_inf=%.6g "
+            "state_update_worst=(%d, %d)",
             diag.iteration,
             diag.accepted_alpha_scale,
             diag.backtrack_iters,
             diag.backtracking_succeeded,
-            diag.trajectory_delta_inf,
+            diag.state_update_inf,
+            diag.state_update_ratio_inf,
+            diag.state_update_worst_time_node,
+            diag.state_update_worst_index,
         )
+
+
+def _state_update_metrics(
+    current: FixedStepSystemTrajectory,
+    previous: FixedStepSystemTrajectory,
+    converged_max_diff: float | jnp.ndarray,
+) -> tuple[float, float, int, int]:
+    """Return raw and tolerance-normalized state-update diagnostics."""
+    tolerance = _as_xs_tolerance(converged_max_diff, current.nx)
+    abs_update = jnp.abs(current.xs - previous.xs)
+
+    # A zero tolerance permits only an exactly unchanged coordinate. Avoid a
+    # ``0 / 0`` diagnostic for that valid case while reporting any nonzero
+    # update as an infinite normalized ratio.
+    safe_tolerance = jnp.where(tolerance > 0.0, tolerance, 1.0)
+    update_ratio = jnp.where(
+        tolerance > 0.0,
+        abs_update / safe_tolerance,
+        jnp.where(abs_update == 0.0, 0.0, jnp.inf),
+    )
+    worst_flat_index = int(jnp.argmax(update_ratio))
+    worst_time_node, worst_state_index = divmod(worst_flat_index, current.nx)
+    return (
+        float(jnp.max(abs_update)),
+        float(jnp.max(update_ratio)),
+        worst_time_node,
+        worst_state_index,
+    )
 
 
 def _log_ilq_result(logger, diag: ILQSolverDiag | None) -> None:

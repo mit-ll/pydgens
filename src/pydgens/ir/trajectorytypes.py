@@ -234,6 +234,23 @@ def are_xs_close(
     """Check whether state trajectories satisfy scalar or componentwise bounds."""
     raise NotImplementedError
 
+
+def _as_xs_tolerance(
+    max_elwise_diff: float | jnp.ndarray, nx: int
+) -> jnp.ndarray:
+    """Validate and normalize a scalar or componentwise state tolerance."""
+    tolerance = jnp.asarray(max_elwise_diff)
+    if tolerance.ndim > 1 or (
+        tolerance.ndim == 1 and tolerance.shape != (nx,)
+    ):
+        raise ValueError(
+            "max_elwise_diff must be a scalar or have shape "
+            f"({nx},). Got {tolerance.shape}."
+        )
+    if bool(jnp.any(tolerance < 0.0)):
+        raise ValueError(f"max_elwise_diff must be non-negative, got {max_elwise_diff}")
+    return tolerance
+
 @are_xs_close.register(FixedStepSystemTrajectory)
 def _are_xs_close(
     traj1: FixedStepSystemTrajectory, 
@@ -250,17 +267,7 @@ def _are_xs_close(
     if traj1.xs.shape != traj2.xs.shape:
         raise ValueError(f"State trajectories xs shapes do not match. got traj1.xs.shape={traj1.xs.shape}, traj2.xs.shape={traj2.xs.shape}")
     
-    tolerance = jnp.asarray(max_elwise_diff)
-    if tolerance.ndim > 1 or (
-        tolerance.ndim == 1 and tolerance.shape != (traj1.nx,)
-    ):
-        raise ValueError(
-            "max_elwise_diff must be a scalar or have shape "
-            f"({traj1.nx},). Got {tolerance.shape}."
-        )
-
-    if bool(jnp.any(tolerance < 0.0)):
-        raise ValueError(f"max_elwise_diff must be non-negative, got {max_elwise_diff}")
+    tolerance = _as_xs_tolerance(max_elwise_diff, traj1.nx)
     
     if traj1.tg != traj2.tg:
         raise ValueError(f"Inconsistent time characteristics, got traj1.tg={traj1.tg}, traj2.tg={traj2.tg}")
