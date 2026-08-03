@@ -80,7 +80,7 @@ def backtrack_scale_strategy(
     max_iters: int,
     alpha_scale_init: float,
     alpha_scale_step: float,
-    max_elwise_diff: float,
+    max_elwise_diff: float | jnp.ndarray,
     return_info: bool = False,
     logger = None,
 ) -> (
@@ -119,8 +119,10 @@ def backtrack_scale_strategy(
     - alpha_scale_step : float
         Multiplicative decay rate for candidate strategy feedforward term (alpha) during backtracking 
         e.g., 0.5 halves the step size at each attempt
-    - max_elwise_diff : float
-        Maximum allowed element-wise trajectory deviation before declaring divergence.
+    - max_elwise_diff : float or jax.Array, shape ``(nx,)``
+        Strict scalar or per-state-component bounds on trajectory deviation
+        before declaring divergence. A scalar applies to every state
+        component; a vector supports mixed-unit state scales.
     - return_info : bool, optional
         When true, append ``(attempts, accepted_alpha_scale)`` to the return
         tuple. This is intended for solver diagnostics.
@@ -210,11 +212,11 @@ def solve_ilqgame_feedback(
     init_traj: FixedStepSystemTrajectory = None,
     init_strat: FixedStepAffineStrategies = None,
     max_iters: int = 50,
-    converged_max_diff: float = 5e-2,   # Ref: https://github.com/JuliaGameTheoreticPlanning/iLQGames.jl/blob/v0.2.7/src/ilq_solver.jl#L17
+    converged_max_diff: float | jnp.ndarray = 5e-2,   # Ref: https://github.com/JuliaGameTheoreticPlanning/iLQGames.jl/blob/v0.2.7/src/ilq_solver.jl#L17
     backtrack_max_iters: int = 20,
     backtrack_scale_init: float = 0.5,
     backtrack_scale_step: float = 0.5,
-    backtrack_scale_max_diff: float = 30 * 5e-2, # Ref: https://github.com/JuliaGameTheoreticPlanning/iLQGames.jl/blob/v0.2.7/src/ilq_solver.jl#L20
+    backtrack_scale_max_diff: float | jnp.ndarray = 30 * 5e-2, # Ref: https://github.com/JuliaGameTheoreticPlanning/iLQGames.jl/blob/v0.2.7/src/ilq_solver.jl#L20
     logger = None,
     collect_diagnostics: bool = False,
 ) -> Tuple[
@@ -250,8 +252,10 @@ def solve_ilqgame_feedback(
         omitted, a zero strategy of matching shape is used.
     - max_iters : int, optional
         Maximum number of outer iterations before termination.
-    - converged_max_diff : float, optional
-        Threshold for convergence of the state trajectory (infinity norm).
+    - converged_max_diff : float or jax.Array, shape ``(nx,)``, optional
+        Strict scalar or per-state-component bounds for convergence of the
+        state trajectory. A vector supports different absolute tolerances for
+        mixed-unit state components.
     - backtrack_max_iters : int, optional
         Maximum number of backtracking steps when scaling the strategy toward the LQ solution.
     - backtrack_scale_init : float, optional
@@ -260,8 +264,9 @@ def solve_ilqgame_feedback(
     - backtrack_scale_step : float, optional
         Multiplicative decay rate for alpha during backtracking 
         e.g., 0.5 halves the step size at each attempt
-    - backtrack_scale_max_diff : float, optional
-        maximum infnorm of trajectories allowed during backtrack scaling
+    - backtrack_scale_max_diff : float or jax.Array, shape ``(nx,)``, optional
+        Strict scalar or per-state-component bounds on the trajectory update
+        allowed during backtrack scaling.
     - logger : Logger
         logger object to manage logs of solver
     - collect_diagnostics : bool, optional
@@ -283,7 +288,8 @@ def solve_ilqgame_feedback(
 
     Notes
     -----
-    - The convergence check is based on the elementwise infinity norm of state deviations.
+    - Convergence and backtracking both use the same scalar-or-componentwise
+      absolute state-deviation check.
     - Cost quadraticizations are computed per player, allowing heterogeneous objectives.
     - The algorithm follows the general structure of iLQ or iLQGames algorithms, 
     with backtracking to ensure numerical stability.

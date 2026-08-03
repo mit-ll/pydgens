@@ -163,6 +163,57 @@ def test_are_xs_close_exceeds_threshold():
     )
     assert not irtraj.are_xs_close(traj1, traj2, max_elwise_diff=0.2)
 
+
+def test_are_xs_close_accepts_componentwise_tolerances():
+    """Mixed-unit state components may use separate absolute bounds."""
+    traj1 = irtraj.make_system_trajectory(
+        TimeGrid(nt=2, dt=0.1),
+        xs=[[0.0, 0.0, 0.0], [100.0, 200.0, 1.0]],
+        us=[[0.0]],
+    )
+    traj2 = irtraj.make_system_trajectory(
+        TimeGrid(nt=2, dt=0.1),
+        xs=[[0.4, 0.01, 0.002], [100.4, 200.01, 1.002]],
+        us=[[0.0]],
+    )
+
+    assert irtraj.are_xs_close(
+        traj1,
+        traj2,
+        max_elwise_diff=jnp.array([0.5, 0.02, 0.005]),
+    )
+    assert not irtraj.are_xs_close(traj1, traj2, max_elwise_diff=0.02)
+
+
+def test_are_xs_close_rejects_componentwise_tolerance_shape_mismatch():
+    traj = irtraj.make_system_trajectory(
+        TimeGrid(nt=2, dt=0.1),
+        xs=[[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]],
+        us=[[0.0]],
+    )
+
+    with pytest.raises(ValueError, match="scalar or have shape"):
+        irtraj.are_xs_close(
+            traj,
+            traj,
+            max_elwise_diff=jnp.array([0.1, 0.1]),
+        )
+
+
+def test_are_xs_close_rejects_negative_componentwise_tolerance():
+    traj = irtraj.make_system_trajectory(
+        TimeGrid(nt=2, dt=0.1),
+        xs=[[0.0, 0.0], [1.0, 1.0]],
+        us=[[0.0]],
+    )
+
+    with pytest.raises(ValueError, match="non-negative"):
+        irtraj.are_xs_close(
+            traj,
+            traj,
+            max_elwise_diff=jnp.array([0.1, -0.1]),
+        )
+
 def test_are_xs_close_mismatched_xs_shape():
     traj1 = irtraj.make_system_trajectory(
         TimeGrid(nt=2, dt=0.1),

@@ -28,6 +28,11 @@ Theory notes:
 The `iLQ` path repeatedly builds local linear-quadratic approximations of a
 nonlinear game and solves those approximations for local feedback Nash updates.
 
+The iLQ solver accepts scalar or per-state-component absolute bounds for both
+its convergence check (`converged_max_diff`) and backtracking rollout check
+(`backtrack_scale_max_diff`). Supplying a vector of length `nx` is useful for
+mixed-unit states, for example separate position and heading tolerances.
+
 Used by:
 
 - [`unicycle.py`](https://github.com/mit-ll/pydgens/blob/main/src/pydgens/examples/unicycle.py)

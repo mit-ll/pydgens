@@ -229,30 +229,43 @@ def make_system_trajectory(tg, xs, us) -> FixedStepSystemTrajectory:
 def are_xs_close(
     traj1, 
     traj2: FixedStepSystemTrajectory, 
-    max_elwise_diff: float
+    max_elwise_diff: float | jnp.ndarray,
 ) -> bool:
-    """Check if two trajectories are elementwise-close in `xs` under inf-norm."""
+    """Check whether state trajectories satisfy scalar or componentwise bounds."""
     raise NotImplementedError
 
 @are_xs_close.register(FixedStepSystemTrajectory)
 def _are_xs_close(
     traj1: FixedStepSystemTrajectory, 
     traj2: FixedStepSystemTrajectory, 
-    max_elwise_diff: float
+    max_elwise_diff: float | jnp.ndarray,
 ) -> bool:
-    """Check if two trajectories are elementwise-close in `xs` under inf-norm."""
+    """Check whether state trajectories satisfy scalar or componentwise bounds.
+
+    ``max_elwise_diff`` may be a scalar, which applies the same strict bound
+    to every state component, or a vector with shape ``(nx,)``. Vector bounds
+    broadcast across time nodes, allowing mixed-unit states such as position
+    and heading to use separate tolerances.
+    """
     if traj1.xs.shape != traj2.xs.shape:
         raise ValueError(f"State trajectories xs shapes do not match. got traj1.xs.shape={traj1.xs.shape}, traj2.xs.shape={traj2.xs.shape}")
     
-    if max_elwise_diff < 0.0:
+    tolerance = jnp.asarray(max_elwise_diff)
+    if tolerance.ndim > 1 or (
+        tolerance.ndim == 1 and tolerance.shape != (traj1.nx,)
+    ):
+        raise ValueError(
+            "max_elwise_diff must be a scalar or have shape "
+            f"({traj1.nx},). Got {tolerance.shape}."
+        )
+
+    if bool(jnp.any(tolerance < 0.0)):
         raise ValueError(f"max_elwise_diff must be non-negative, got {max_elwise_diff}")
     
     if traj1.tg != traj2.tg:
         raise ValueError(f"Inconsistent time characteristics, got traj1.tg={traj1.tg}, traj2.tg={traj2.tg}")
 
-    # Check all time steps
-    diffs = jnp.max(jnp.abs(traj1.xs - traj2.xs), axis=1)  # (T,)
-    return jnp.all(diffs < max_elwise_diff)
+    return jnp.all(jnp.abs(traj1.xs - traj2.xs) < tolerance)
 
 @singledispatch
 def get_player_control_trajectory(

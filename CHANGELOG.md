@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `ilqsolver.py` new logger debug statements for identifying bottleneck variables in backtrack scaling
+- `ilqsolver.py` and `trajectorytypes.py` now accept scalar or per-state
+  component absolute tolerances for iLQ convergence and backtracking checks.
 
 ## [v1.2.0] - 2026.07.30
 

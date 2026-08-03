@@ -178,7 +178,7 @@ def nlgame_direct(request):
 
 def test_backtrack_scale_strategy_linear_dynamics_feedforward_strategy(nlgame_direct):
     game = nlgame_direct
-    max_elwise_diff = 0.2
+    max_elwise_diff = jnp.full((game.nx,), 0.2)
     alpha_del_val = 1.0
     
     # Construct previous zero trajectory and initial strategy
@@ -203,7 +203,7 @@ def test_backtrack_scale_strategy_linear_dynamics_feedforward_strategy(nlgame_di
     max_diff = jnp.max(diff)
     assert max_diff > 0 # there should be some difference in operating point trajectories to 
                         # ensure backtrack scaling has not just returned the original op
-    assert max_diff < max_elwise_diff, f"Max deviation {max_diff} exceeds threshold"
+    assert max_diff < jnp.max(max_elwise_diff), f"Max deviation {max_diff} exceeds threshold"
 
     # Confirm strategy was scaled down but original candidate not modified
     # NOTE: cannot directly check this downscaling of the absolute-valued (x, u) strategy
