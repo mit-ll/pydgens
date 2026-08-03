@@ -58,18 +58,18 @@ class ILQModelAgreementDiag:
         Per-player cost changes predicted by the LQ approximation evaluated at
         the selected state and control update. The zero-update LQ baseline is
         zero because the local model omits constant cost terms.
-    cost_reduction_ratio
-        Per-player ratio of actual to LQ-predicted cost reduction:
-        ``(before - after) / (-lq_predicted_cost_change)``. ``None`` when the
-        LQ model does not predict a strictly positive reduction, since a ratio
-        would not be an interpretable agreement measure in that case.
+    cost_change_ratio
+        Per-player ratio of actual to LQ-predicted signed cost change:
+        ``nonlinear_cost_change / lq_predicted_cost_change``. A value of one
+        denotes exact agreement whether the player's cost increased or
+        decreased. ``None`` when the LQ model predicts exactly zero change.
     """
 
     nonlinear_cost_before: Tuple[float, ...]
     nonlinear_cost_after: Tuple[float, ...]
     nonlinear_cost_change: Tuple[float, ...]
     lq_predicted_cost_change: Tuple[float, ...]
-    cost_reduction_ratio: Tuple[float | None, ...]
+    cost_change_ratio: Tuple[float | None, ...]
 
 
 @dataclass(frozen=True)
@@ -517,12 +517,12 @@ def _log_ilq_iteration(logger, diag: ILQSolverIterDiag) -> None:
         if diag.model_agreement is not None:
             message += (
                 " nonlinear_cost_change=%s lq_predicted_cost_change=%s "
-                "cost_reduction_ratio=%s"
+                "cost_change_ratio=%s"
             )
             values += (
                 diag.model_agreement.nonlinear_cost_change,
                 diag.model_agreement.lq_predicted_cost_change,
-                diag.model_agreement.cost_reduction_ratio,
+                diag.model_agreement.cost_change_ratio,
             )
         logger.debug(message, *values)
 
@@ -622,12 +622,12 @@ def _model_agreement_diagnostics(
         after - before
         for before, after in zip(nonlinear_cost_before, nonlinear_cost_after)
     )
-    reduction_ratio = tuple(
-        (before - after) / -predicted
-        if predicted < 0.0
+    cost_change_ratio = tuple(
+        change / predicted
+        if predicted != 0.0
         else None
-        for before, after, predicted in zip(
-            nonlinear_cost_before, nonlinear_cost_after, predicted_change
+        for change, predicted in zip(
+            nonlinear_change, predicted_change
         )
     )
     return ILQModelAgreementDiag(
@@ -635,7 +635,7 @@ def _model_agreement_diagnostics(
         nonlinear_cost_after=nonlinear_cost_after,
         nonlinear_cost_change=nonlinear_change,
         lq_predicted_cost_change=predicted_change,
-        cost_reduction_ratio=reduction_ratio,
+        cost_change_ratio=cost_change_ratio,
     )
 
 

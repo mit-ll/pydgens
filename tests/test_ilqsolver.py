@@ -27,6 +27,7 @@ from pydgens.ir.costtypes import (
 )
 from pydgens.solvers.lqsolver import solve_lqgame_feedback
 from pydgens.solvers.ilqsolver import (
+    _model_agreement_diagnostics,
     _state_update_metrics,
     scale_strategy,
     backtrack_scale_strategy,
@@ -815,7 +816,7 @@ def test_solve_ilqgame_feedback_detailed_diagnostics_handle_zero_update():
     assert model_agreement.nonlinear_cost_after == (0.0,)
     assert model_agreement.nonlinear_cost_change == (0.0,)
     assert model_agreement.lq_predicted_cost_change == (0.0,)
-    assert model_agreement.cost_reduction_ratio == (None,)
+    assert model_agreement.cost_change_ratio == (None,)
 
 
 def test_state_update_metrics_are_componentwise_normalized():
@@ -839,6 +840,49 @@ def test_state_update_metrics_are_componentwise_normalized():
     assert update_ratio_inf == pytest.approx(1.5)
     assert worst_time_node == 1
     assert worst_index == 1
+
+
+def test_model_agreement_cost_change_ratio_handles_opposite_player_directions():
+    tg = TimeGrid(nt=2, dt=0.1)
+    previous = FixedStepSystemTrajectory(
+        tg=tg,
+        xs=jnp.array([[0.0], [0.0]]),
+        us=jnp.zeros((1, 2)),
+    )
+    current = FixedStepSystemTrajectory(
+        tg=tg,
+        xs=jnp.array([[0.0], [1.0]]),
+        us=jnp.zeros((1, 2)),
+    )
+    lq_game = LinearQuadraticGameType1(
+        cs=LinearDiscreteSystemType1(
+            tg=tg,
+            nx=1,
+            nu=2,
+            A=jnp.ones((1, 1, 1)),
+            B=jnp.zeros((1, 1, 2)),
+        ),
+        N=2,
+        Q=jnp.zeros((1, 2, 1, 1)),
+        q=jnp.zeros((1, 2, 1)),
+        R=jnp.zeros((1, 2, 2, 2)),
+        r=jnp.zeros((1, 2, 2)),
+        Qf=jnp.zeros((2, 1, 1)),
+        qf=jnp.array([[-2.0], [3.0]]),
+        u_splits=jnp.array([1, 1]),
+    )
+
+    model_agreement = _model_agreement_diagnostics(
+        nonlinear_cost_before=(10.0, -10.0),
+        nonlinear_cost_after=(8.0, -7.0),
+        lq_game=lq_game,
+        current=current,
+        previous=previous,
+    )
+
+    assert model_agreement.nonlinear_cost_change == (-2.0, 3.0)
+    assert model_agreement.lq_predicted_cost_change == (-2.0, 3.0)
+    assert model_agreement.cost_change_ratio == (1.0, 1.0)
 
 
 def test_solve_ilqgame_feedback_terminal_target_moves_one_stage_state():
@@ -877,7 +921,7 @@ def test_solve_ilqgame_feedback_terminal_target_moves_one_stage_state():
     assert trajectory.us[0, 0] > 0.0
     assert 0.0 < trajectory.xs[-1, 0] < target
     assert all(diag.model_agreement is not None for diag in diagnostics.history)
-    assert diagnostics.history[0].model_agreement.cost_reduction_ratio[0] == pytest.approx(1.0)
+    assert diagnostics.history[0].model_agreement.cost_change_ratio[0] == pytest.approx(1.0)
 
 # def test_solve_ilqgame_feedback_lq(arbitrary_time_varying_lqgame):
 #     # Run the iterative linear-quadratic solver on a game that is actually linear-quadratic

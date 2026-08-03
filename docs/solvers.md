@@ -42,10 +42,11 @@ norm, its componentwise convergence-tolerance-normalized infinity norm, and
 the numeric time-node and state-index location of that normalized maximum.
 With `diagnostics_level="detailed"`, iLQ also records per-player nonlinear
 costs before and after each rollout, the local LQ model's predicted cost
-change, and `cost_reduction_ratio`: actual cost reduction divided by predicted
-cost reduction. The ratio is `None` when the local model does not predict a
-strictly positive reduction. These are model-agreement observations only; they
-do not alter backtracking or step acceptance.
+change, and `cost_change_ratio`: actual signed cost change divided by predicted
+signed cost change. A ratio of one indicates exact agreement whether a
+player's cost increases or decreases; it is `None` only for exactly zero
+predicted change. These are model-agreement observations only; they do not
+alter backtracking or step acceptance.
 
 Used by:
 
