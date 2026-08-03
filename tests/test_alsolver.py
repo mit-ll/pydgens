@@ -5753,7 +5753,7 @@ def test_al_solve_autodiff_outer_updates_lambda_and_rho(monkeypatch):
         ineq_tol=0.0,
         eq_tol=0.0,
         newton_max_iters=1,
-        collect_diagnostics=False,
+        diagnostics_level="off",
     )
 
     assert summary_diag is None

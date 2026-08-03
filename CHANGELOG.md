@@ -9,15 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `ilqsolver.py` new logger debug statements for identifying bottleneck variables in backtrack scaling
+- `diagnostics_level` now provides a common ``"off"`` / ``"basic"`` /
+  ``"detailed"`` collection contract for frontend, iLQ, and AL solves.
 - `ilqsolver.py` and `trajectorytypes.py` now accept scalar or per-state
   component absolute tolerances for iLQ convergence and backtracking checks.
+
+### Changed
+
+- `ilqsolver.py` now renders compact per-iteration logger output from retained
+  diagnostics instead of dumping trajectories or individual backtracking trials.
 
 ## [v1.2.0] - 2026.07.30
 
 - `ilqsolver.py` and `alsolver.py` now use fixed solver return tuples with
   convergence first and diagnostics last. Per-iteration diagnostics remain. Note that this is technically backward-incompatible for the backend solvers but keeps the same frontend API, thus this is not a major version revision
-  opt-in through `pdg.solve(..., collect_diagnostics=True)`.
+  opt-in through `pdg.solve(..., diagnostics_level="basic")`.
 - `diagnostictypes.py` shared iterative-solver termination contract used by
   iLQ and AL diagnostics.
 

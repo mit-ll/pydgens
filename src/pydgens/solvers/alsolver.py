@@ -24,6 +24,7 @@ import pydgens.ir.costtypes as costtypes
 import pydgens.ir.constrainttypes as contypes
 import pydgens.ir.gametypes as gametypes
 import pydgens.ir.altypes as altypes
+from pydgens.ir.diagnostictypes import DiagnosticsLevel, validate_diagnostics_level
 
 # module-level logger
 logger = logging.getLogger(__name__)
@@ -3023,7 +3024,7 @@ def al_solve(
     ls_max_iters: int = 20,
     normkind: ResidualNormKind = "l1_mean",
     jacobian_backend: JacobianBackendKind = "structured",
-    collect_diagnostics: bool = True,
+    diagnostics_level: DiagnosticsLevel = "basic",
 ) -> Tuple[
     bool,
     trajtypes.FixedStepPrimalDualTrajectory,
@@ -3169,10 +3170,10 @@ def al_solve(
     normkind : ResidualNormKind
         Merit norm used for line search and recorded diagnostics (e.g. "l1_mean" to match ALGAMES).
 
-    collect_diagnostics : bool, default=True
-        Whether to retain a per-outer-iteration ``ALSolverDiag``. Disabling
-        collection avoids constructing history records and their AL-state
-        scalar summaries.
+    diagnostics_level : {"off", "basic", "detailed"}, default="basic"
+        Collection level for ``ALSolverDiag``. ``"basic"`` retains
+        per-outer-iteration records; ``"detailed"`` currently has the same
+        fields and reserves room for future expensive metrics.
 
     Returns
     -------
@@ -3186,7 +3187,8 @@ def al_solve(
         Final auxiliary-constraint AL state (λ, ρ) after outer iterations.
 
     diag : ALSolverDiag or None
-        Per-outer-iteration diagnostics when ``collect_diagnostics=True``;
+        Per-outer-iteration diagnostics when ``diagnostics_level`` is not
+        ``"off"``;
         otherwise ``None``.
 
     Notes
@@ -3201,40 +3203,15 @@ def al_solve(
     if nlgame.tg != op0.tg:
         raise ValueError(f"TimeGrid mismatch: nlgame.tg={nlgame.tg} vs op0.tg={op0.tg}")
     _validate_jacobian_backend(jacobian_backend)
-
-    debug_enabled = logger.isEnabledFor(logging.DEBUG)
-    al_call_id = _next_debug_call_id("al_solve")
-    al_t0 = time.perf_counter() if debug_enabled else 0.0
-    if debug_enabled:
-        logger.debug(
-            "AL outer solve start call=%d max_outer_iters=%d newton_max_iters=%d rho_increase=%.6g rho_max=%.6g jacobian_backend=%s",
-            al_call_id,
-            max_iters,
-            newton_max_iters,
-            rho_increase,
-            rho_max,
-            jacobian_backend,
-        )
+    diagnostics_level = validate_diagnostics_level(diagnostics_level)
 
     op = op0
     alstate = alstate0
     hist: List[altypes.ALSolverOuterIterDiag] | None = (
-        [] if collect_diagnostics else None
+        [] if diagnostics_level != "off" else None
     )
 
     for k in range(max_iters):
-        if debug_enabled:
-            logger.debug(
-                "AL outer iter start call=%d iter=%d/%d rho_ineq_max=%.6g rho_eq_max=%.6g lam_ineq_max=%.6g lam_eq_max=%.6g",
-                al_call_id,
-                k + 1,
-                max_iters,
-                float(jnp.max(alstate.rho_ineq)) if alstate.rho_ineq.size else 0.0,
-                float(jnp.max(alstate.rho_eq)) if alstate.rho_eq.size else 0.0,
-                float(jnp.max(alstate.lam_ineq)) if alstate.lam_ineq.size else 0.0,
-                float(jnp.max(alstate.lam_eq)) if alstate.lam_eq.size else 0.0,
-            )
-
         # ---- 1) inner solve: newton root finding of G=0 with fixed (λ,ρ) ----
         op, newton_diag = newton_solve_stationarity(
             nlgame, op, alstate,
@@ -3296,9 +3273,9 @@ def al_solve(
         )
         ineq_vio, eq_vio = _constraint_violation_metrics(c_ineq, c_eq)
 
-        if collect_diagnostics:
+        if hist is not None:
             assert hist is not None
-            hist.append(altypes.ALSolverOuterIterDiag(
+            outer_diag = altypes.ALSolverOuterIterDiag(
                 outer_iter=k,
                 newton_converged=newton_diag.converged,
                 newton_iters=newton_diag.iters,
@@ -3312,23 +3289,9 @@ def al_solve(
                 rho_eq_max=float(jnp.max(alstate.rho_eq)) if alstate.rho_eq.size else 0.0,
                 lam_ineq_max=float(jnp.max(alstate.lam_ineq)) if alstate.lam_ineq.size else 0.0,
                 lam_eq_max=float(jnp.max(alstate.lam_eq)) if alstate.lam_eq.size else 0.0,
-            ))
-
-        if debug_enabled:
-            logger.debug(
-                "AL outer iter done call=%d iter=%d/%d newton_reason=%s newton_iters=%d newton_converged=%s residual=%.6g opt=%.6g dyn=%.6g ineq=%.6g eq=%.6g",
-                al_call_id,
-                k + 1,
-                max_iters,
-                newton_diag.reason,
-                newton_diag.iters,
-                newton_diag.converged,
-                g_norm,
-                opt_vio,
-                dyn_vio,
-                ineq_vio,
-                eq_vio,
             )
+            hist.append(outer_diag)
+            _log_al_outer_iteration(logger, outer_diag)
 
         # ---- 5) convergence check ----
         if (
@@ -3347,13 +3310,7 @@ def al_solve(
                 if hist is not None
                 else None
             )
-            if debug_enabled:
-                logger.debug(
-                    "AL outer solve converged call=%d iters=%d total_dt=%.3fs",
-                    al_call_id,
-                    k + 1,
-                    time.perf_counter() - al_t0,
-                )
+            _log_al_result(logger, diag)
             return True, op, alstate, diag
 
         # ---- 3) Dual ascent update on λ (uses values in canonical order) ----
@@ -3372,15 +3329,35 @@ def al_solve(
         if hist is not None
         else None
     )
-    if debug_enabled:
-        logger.debug(
-            "AL outer solve stop call=%d iters=%d reason=%s total_dt=%.3fs",
-            al_call_id,
-            max_iters,
-            "max_outer_iters",
-            time.perf_counter() - al_t0,
-        )
+    _log_al_result(logger, diag)
     return False, op, alstate, diag
+
+
+def _log_al_outer_iteration(logger, diag: altypes.ALSolverOuterIterDiag) -> None:
+    """Render an AL outer-iteration diagnostic without recomputing metrics."""
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(
+            "AL iter=%d newton=%s/%d residual=%.6g opt=%.6g dyn=%.6g ineq=%.6g eq=%.6g",
+            diag.outer_iter,
+            diag.newton_reason,
+            diag.newton_iters,
+            diag.residual_norm_final,
+            diag.opt_vio_inf,
+            diag.dyn_vio_inf,
+            diag.ineq_vio_inf,
+            diag.eq_vio_inf,
+        )
+
+
+def _log_al_result(logger, diag: altypes.ALSolverDiag | None) -> None:
+    """Render the final AL diagnostic without recomputing metrics."""
+    if diag is not None and logger.isEnabledFor(logging.INFO):
+        logger.info(
+            "AL finished converged=%s iters=%d reason=%s",
+            diag.converged,
+            diag.iters,
+            diag.reason,
+        )
 
 
 def al_solve_autodiff(

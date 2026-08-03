@@ -770,7 +770,7 @@ def test_solve_ilqgame_feedback_returns_opt_in_diagnostics_for_zero_step_game():
     converged, _, _, diagnostics = solve_ilqgame_feedback(
         nlgame=nlgame,
         x0=jnp.array([2.0]),
-        collect_diagnostics=True,
+        diagnostics_level="basic",
     )
 
     assert converged is True

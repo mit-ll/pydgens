@@ -300,6 +300,14 @@ def test_solve_rejects_incompatible_explicit_method():
         )
 
 
+def test_solve_rejects_unknown_diagnostics_level():
+    with pytest.raises(ValueError, match="diagnostics_level"):
+        pdg.solve(
+            _make_lq_game(),
+            diagnostics_level="verbose",
+        )
+
+
 def test_solve_ilq_auto_dispatches(monkeypatch):
 
     class FakeNLGame1:
@@ -382,7 +390,7 @@ def test_solve_ilq_collects_opt_in_diagnostics(monkeypatch):
 
     def fake_solve_ilqgame_feedback(nlgame, x0, **kwargs):
         assert nlgame is game
-        assert kwargs["collect_diagnostics"] is True
+        assert kwargs["diagnostics_level"] == "basic"
         return False, "trajectory", "strategy", diagnostics
 
     monkeypatch.setattr(
@@ -394,7 +402,7 @@ def test_solve_ilq_collects_opt_in_diagnostics(monkeypatch):
     result = pdg.solve(
         game,
         x0=jnp.array([2.0]),
-        collect_diagnostics=True,
+        diagnostics_level="basic",
     )
 
     assert result.converged is False
@@ -446,7 +454,7 @@ def test_solve_al_frontend_game_auto_dispatches(monkeypatch):
         captured["game"] = nlgame
         captured["op0"] = op0
         captured["alstate0"] = alstate0
-        captured["collect_diagnostics"] = kwargs["collect_diagnostics"]
+        captured["diagnostics_level"] = kwargs["diagnostics_level"]
         return True, "pdtraj", "alstate", diagnostics
 
     monkeypatch.setattr(
@@ -470,7 +478,7 @@ def test_solve_al_frontend_game_auto_dispatches(monkeypatch):
     assert result.primal_dual_trajectory == "pdtraj"
     assert result.al_state == "alstate"
     assert result.diagnostics is diagnostics
-    assert captured["collect_diagnostics"] is False
+    assert captured["diagnostics_level"] == "off"
     assert isinstance(captured["game"], fsolvers.NonlinearGameType2)
     assert isinstance(
         captured["op0"],
@@ -513,7 +521,7 @@ def test_solve_al_auto_dispatches_with_default_initialization(monkeypatch):
         captured["game"] = nlgame
         captured["op0"] = op0
         captured["alstate0"] = alstate0
-        captured["collect_diagnostics"] = kwargs["collect_diagnostics"]
+        captured["diagnostics_level"] = kwargs["diagnostics_level"]
         return False, "pdtraj", "alstate", "diag"
 
     monkeypatch.setattr(
@@ -532,7 +540,7 @@ def test_solve_al_auto_dispatches_with_default_initialization(monkeypatch):
     result = pdg.solve(
         game,
         x0=jnp.array([3.0, -1.0]),
-        collect_diagnostics=True,
+        diagnostics_level="basic",
     )
 
     assert result.method == "al"
@@ -542,7 +550,7 @@ def test_solve_al_auto_dispatches_with_default_initialization(monkeypatch):
     assert result.diagnostics == "diag"
 
     assert captured["game"] is game
-    assert captured["collect_diagnostics"] is True
+    assert captured["diagnostics_level"] == "basic"
     assert captured["nc_ineq"] == 5
     assert captured["nc_eq"] == 2
     assert isinstance(

@@ -19,6 +19,7 @@ from pydgens.ir.altypes import (
     JointAugmentedLagrangianState,
     init_joint_augmented_lagrangian_state,
 )
+from pydgens.ir.diagnostictypes import DiagnosticsLevel, validate_diagnostics_level
 from pydgens.ir.gametypes import (
     LinearQuadraticGameType1,
     NonlinearGameType1,
@@ -170,7 +171,7 @@ def solve(
     method: SolveMethod = "auto",
     op0: FixedStepPrimalDualTrajectory | None = None,
     al_state0: JointAugmentedLagrangianState | None = None,
-    collect_diagnostics: bool = False,
+    diagnostics_level: DiagnosticsLevel = "off",
     **solver_kwargs,
 ) -> SolveResult:
     """
@@ -208,10 +209,11 @@ def solve(
     al_state0:
         Optional initial augmented Lagrangian state for the AL solver.
 
-    collect_diagnostics:
-        Request retained per-iteration diagnostics from iLQ and AL. This is opt-in
-        because converting and retaining scalar history can synchronize JAX
-        work. Both solvers always return a compact termination diagnostic.
+    diagnostics_level:
+        Requested iterative-solver diagnostics collection level. ``"off"``
+        avoids retained diagnostics, ``"basic"`` collects lightweight
+        iteration records, and ``"detailed"`` reserves room for future
+        compute-heavy metrics.
 
     **solver_kwargs:
         Additional keyword arguments forwarded to the selected low-level
@@ -247,6 +249,7 @@ def solve(
     result without changing the basic dispatch contract.
     """
 
+    diagnostics_level = validate_diagnostics_level(diagnostics_level)
     resolved_method = _resolve_solve_method(
         game=game,
         method=method,
@@ -263,7 +266,7 @@ def solve(
         return _solve_ilq_frontend(
             game=game,
             x0=x0,
-            collect_diagnostics=collect_diagnostics,
+            diagnostics_level=diagnostics_level,
             **solver_kwargs,
         )
 
@@ -273,7 +276,7 @@ def solve(
             x0=x0,
             op0=op0,
             al_state0=al_state0,
-            collect_diagnostics=collect_diagnostics,
+            diagnostics_level=diagnostics_level,
             **solver_kwargs,
         )
 
@@ -366,7 +369,7 @@ def _solve_ilq_frontend(
     *,
     game,
     x0,
-    collect_diagnostics: bool,
+    diagnostics_level: DiagnosticsLevel,
     **solver_kwargs,
 ) -> SolveResult:
     """
@@ -390,7 +393,7 @@ def _solve_ilq_frontend(
     converged, trajectory, strategy, diagnostics = solve_ilqgame_feedback(
         nlgame,
         x0=jnp.asarray(x0),
-        collect_diagnostics=collect_diagnostics,
+        diagnostics_level=diagnostics_level,
         **solver_kwargs,
     )
 
@@ -410,7 +413,7 @@ def _solve_al_frontend(
     x0,
     op0: FixedStepPrimalDualTrajectory | None,
     al_state0: JointAugmentedLagrangianState | None,
-    collect_diagnostics: bool,
+    diagnostics_level: DiagnosticsLevel,
     **solver_kwargs,
 ) -> SolveResult:
     """
@@ -445,7 +448,7 @@ def _solve_al_frontend(
         game,
         op0,
         al_state0,
-        collect_diagnostics=collect_diagnostics,
+        diagnostics_level=diagnostics_level,
         **solver_kwargs,
     )
 

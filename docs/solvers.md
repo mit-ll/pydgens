@@ -33,6 +33,11 @@ its convergence check (`converged_max_diff`) and backtracking rollout check
 (`backtrack_scale_max_diff`). Supplying a vector of length `nx` is useful for
 mixed-unit states, for example separate position and heading tolerances.
 
+Iterative solvers accept `diagnostics_level="off"`, `"basic"`, or
+`"detailed"`. This controls retained diagnostics rather than logger
+configuration: solver loggers emit compact renderings of retained records only
+when the caller has independently enabled the corresponding logging level.
+
 Used by:
 
 - [`unicycle.py`](https://github.com/mit-ll/pydgens/blob/main/src/pydgens/examples/unicycle.py)
