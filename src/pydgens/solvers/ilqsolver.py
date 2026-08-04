@@ -220,10 +220,10 @@ def backtrack_scale_strategy(
     if not (0 < alpha_scale_step <= 1.0):
         raise ValueError("alpha_scale_step must be in the interval (0, 1].")
 
+    scale = alpha_scale_init
     for i in range(max_iters):
 
         # rescale the (delx, delu) strategy
-        scale = alpha_scale_init if i == 0 else alpha_scale_step ** i
         scaled_strat_del = scale_strategy(strat_del, scale)
 
         # Map the rescaled delta-strategy from (delx, delu) coordinates into
@@ -258,6 +258,9 @@ def backtrack_scale_strategy(
             if return_info:
                 return new_strat, new_op, True, (i + 1, scale)
             return new_strat, new_op, True
+
+        # update backtracking scale for next iteration
+        scale *= alpha_scale_step
 
     # Return the last tested values with failure flag
     if return_info:

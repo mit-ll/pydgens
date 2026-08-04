@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `ilqsolver.py` fixed alpha scale logic in backtrack scaling to avoid repeat calls
 - `ilqsolver.py` now renders compact per-iteration logger output from retained
   diagnostics instead of dumping trajectories or individual backtracking trials.
 
