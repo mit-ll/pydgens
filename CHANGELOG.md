@@ -5,20 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [UNRELEASED] - XXXX.XX.XX
+## [v1.3.0] - 2026.08.05
 
 ### Added
 
 - `diagnostics_level` now provides a common ``"off"`` / ``"basic"`` /
   ``"detailed"`` collection contract for frontend, iLQ, and AL solves.
-- `ilqsolver.py` and `trajectorytypes.py` now accept scalar or per-state
-  component absolute tolerances for iLQ convergence and backtracking checks.
 
 ### Changed
 
 - `ilqsolver.py` fixed alpha scale logic in backtrack scaling to avoid repeat calls
 - `ilqsolver.py` now renders compact per-iteration logger output from retained
   diagnostics instead of dumping trajectories or individual backtracking trials.
+- `ilqsolver.py` and `trajectorytypes.py` now accept scalar or per-state
+  component absolute tolerances for iLQ convergence and backtracking checks.
 
 ## [v1.2.0] - 2026.07.30
 
